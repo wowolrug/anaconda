@@ -1,0 +1,78 @@
+
+# =========================
+# .NET / ASP.NET Core
+# =========================
+
+**/bin/
+**/obj/
+**/.vs/
+**/*.user
+**/*.suo
+**/TestResults/
+**/artifacts/
+
+# =========================
+# Secrets and environment
+# =========================
+
+.env
+.env.*
+!.env.example
+
+**/.env
+**/.env.*
+!**/.env.example
+
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/secrets.json
+
+# =========================
+# React Native / Expo
+# =========================
+
+**/node_modules/
+**/.expo/
+**/.expo-shared/
+**/dist/
+**/web-build/
+**/coverage/
+
+# =========================
+# Android / iOS generated
+# =========================
+
+**/android/.gradle/
+**/android/app/build/
+**/android/local.properties
+**/android/.cxx/
+**/ios/Pods/
+**/ios/build/
+**/ios/DerivedData/
+
+# =========================
+# Certificates and signing
+# =========================
+
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.mobileprovision
+
+# =========================
+# Editors and operating system
+# =========================
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Package backups
+**/package.backup.json
+**/package-lock.backup.json
