@@ -205,6 +205,14 @@ public class AuthController : ControllerBase
             });
         }
 
+        if (user.IsArchived)
+        {
+            return Unauthorized(new
+            {
+                message = "This account has been archived."
+            });
+        }
+
         var roles = await _userManager.GetRolesAsync(user);
 
         if (roles.Count == 0)

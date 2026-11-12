@@ -12,6 +12,8 @@ public class TrainingGroup
 
     public User Coach { get; set; } = null!;
 
+    public bool IsArchived { get; set; } = false;
+
     public ICollection<GroupMembership> Memberships { get; set; }
         = new List<GroupMembership>();
 

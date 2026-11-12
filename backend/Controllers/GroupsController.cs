@@ -1,3 +1,4 @@
+
 using System.Security.Claims;
 using backend.Data;
 using backend.DTOs;
@@ -35,12 +36,23 @@ public class GroupsController : ControllerBase
             : null;
     }
 
+    private async Task<bool> CoachOwnsActiveGroup(
+        int groupId,
+        int coachId)
+    {
+        return await _db.TrainingGroups.AnyAsync(g =>
+            g.TrainingGroupId == groupId &&
+            g.CoachId == coachId &&
+            !g.IsArchived);
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetGroups()
     {
-        var query = _db.TrainingGroups.AsNoTracking();
+        var query = _db.TrainingGroups
+            .AsNoTracking()
+            .Where(g => !g.IsArchived);
 
-        // Тренер видит только собственные группы.
         if (User.IsInRole("Coach"))
         {
             var coachId = GetCurrentUserId();
@@ -60,7 +72,38 @@ public class GroupsController : ControllerBase
                 g.Description,
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
-                    m => m.LeftDate == null)
+                    m => m.LeftDate == null &&
+                         !m.Athlete.IsArchived)
+            })
+            .ToListAsync();
+
+        return Ok(groups);
+    }
+
+    [HttpGet("archived")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> GetArchivedGroups()
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var groups = await _db.TrainingGroups
+            .AsNoTracking()
+            .Where(g =>
+                g.CoachId == coachId.Value &&
+                g.IsArchived)
+            .OrderBy(g => g.Name)
+            .Select(g => new
+            {
+                g.TrainingGroupId,
+                g.Name,
+                g.Description,
+                g.CoachId,
+                AthletesCount = g.Memberships.Count(
+                    m => m.LeftDate == null &&
+                         !m.Athlete.IsArchived)
             })
             .ToListAsync();
 
@@ -72,9 +115,10 @@ public class GroupsController : ControllerBase
     {
         var query = _db.TrainingGroups
             .AsNoTracking()
-            .Where(g => g.TrainingGroupId == id);
+            .Where(g =>
+                g.TrainingGroupId == id &&
+                !g.IsArchived);
 
-        // Тренер может просматривать только свою группу.
         if (User.IsInRole("Coach"))
         {
             var coachId = GetCurrentUserId();
@@ -93,7 +137,8 @@ public class GroupsController : ControllerBase
                 g.Description,
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
-                    m => m.LeftDate == null)
+                    m => m.LeftDate == null &&
+                         !m.Athlete.IsArchived)
             })
             .FirstOrDefaultAsync();
 
@@ -143,7 +188,8 @@ public class GroupsController : ControllerBase
         {
             Name = name,
             Description = dto.Description?.Trim(),
-            CoachId = coachId.Value
+            CoachId = coachId.Value,
+            IsArchived = false
         };
 
         _db.TrainingGroups.Add(group);
@@ -162,6 +208,90 @@ public class GroupsController : ControllerBase
             });
     }
 
+    [HttpDelete("{id:int}/archive")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> ArchiveGroup(int id)
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var group = await _db.TrainingGroups
+            .FirstOrDefaultAsync(g =>
+                g.TrainingGroupId == id &&
+                g.CoachId == coachId.Value);
+
+        if (group is null)
+        {
+            return NotFound(new
+            {
+                message = "Group not found."
+            });
+        }
+
+        if (group.IsArchived)
+        {
+            return BadRequest(new
+            {
+                message = "Group is already archived."
+            });
+        }
+
+        group.IsArchived = true;
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Group archived.",
+            group.TrainingGroupId,
+            group.IsArchived
+        });
+    }
+
+    [HttpPost("{id:int}/restore")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> RestoreGroup(int id)
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var group = await _db.TrainingGroups
+            .FirstOrDefaultAsync(g =>
+                g.TrainingGroupId == id &&
+                g.CoachId == coachId.Value);
+
+        if (group is null)
+        {
+            return NotFound(new
+            {
+                message = "Group not found."
+            });
+        }
+
+        if (!group.IsArchived)
+        {
+            return BadRequest(new
+            {
+                message = "Group is not archived."
+            });
+        }
+
+        group.IsArchived = false;
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Group restored.",
+            group.TrainingGroupId,
+            group.IsArchived
+        });
+    }
+
     [HttpGet("athletes/available")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> GetAvailableAthletes()
@@ -169,6 +299,7 @@ public class GroupsController : ControllerBase
         var athletes = await _userManager.GetUsersInRoleAsync("Athlete");
 
         var result = athletes
+            .Where(a => !a.IsArchived)
             .OrderBy(a => a.Surname)
             .ThenBy(a => a.Name)
             .Select(a => new
@@ -183,6 +314,186 @@ public class GroupsController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("athletes/archived")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> GetArchivedAthletes()
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var athleteIds = await _db.GroupMemberships
+            .AsNoTracking()
+            .Where(m => m.TrainingGroup.CoachId == coachId.Value)
+            .Select(m => m.AthleteId)
+            .Distinct()
+            .ToListAsync();
+
+        var athletes = await _userManager.GetUsersInRoleAsync("Athlete");
+
+        var result = athletes
+            .Where(a =>
+                a.IsArchived &&
+                athleteIds.Contains(a.Id))
+            .OrderBy(a => a.Surname)
+            .ThenBy(a => a.Name)
+            .Select(a => new
+            {
+                AthleteId = a.Id,
+                a.Name,
+                a.Surname,
+                a.Email
+            })
+            .ToList();
+
+        return Ok(result);
+    }
+
+    [HttpDelete("athletes/{athleteId:int}/archive")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> ArchiveAthlete(int athleteId)
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var athlete = await _userManager.FindByIdAsync(
+            athleteId.ToString());
+
+        if (athlete is null ||
+            !await _userManager.IsInRoleAsync(athlete, "Athlete"))
+        {
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
+        }
+
+        var belongsToCoach = await _db.GroupMemberships
+            .AnyAsync(m =>
+                m.AthleteId == athleteId &&
+                m.LeftDate == null &&
+                m.TrainingGroup.CoachId == coachId.Value &&
+                !m.TrainingGroup.IsArchived);
+
+        if (!belongsToCoach)
+        {
+            return NotFound(new
+            {
+                message =
+                    "Active athlete membership in your groups was not found."
+            });
+        }
+
+        if (athlete.IsArchived)
+        {
+            return BadRequest(new
+            {
+                message = "Athlete is already archived."
+            });
+        }
+
+        athlete.IsArchived = true;
+
+        // Закрываем активное членство во всех группах,
+        // сохраняя историю членства.
+        var activeMemberships = await _db.GroupMemberships
+            .Where(m =>
+                m.AthleteId == athleteId &&
+                m.LeftDate == null)
+            .ToListAsync();
+
+        var now = DateTime.UtcNow;
+
+        foreach (var membership in activeMemberships)
+        {
+            membership.LeftDate = now;
+        }
+
+        var updateResult = await _userManager.UpdateAsync(athlete);
+
+        if (!updateResult.Succeeded)
+        {
+            return BadRequest(new
+            {
+                errors = updateResult.Errors.Select(e => e.Description)
+            });
+        }
+
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Athlete archived.",
+            AthleteId = athlete.Id,
+            athlete.IsArchived
+        });
+    }
+
+    [HttpPost("athletes/{athleteId:int}/restore")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> RestoreAthlete(int athleteId)
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var athlete = await _userManager.FindByIdAsync(
+            athleteId.ToString());
+
+        if (athlete is null ||
+            !await _userManager.IsInRoleAsync(athlete, "Athlete"))
+        {
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
+        }
+
+        var hasMembershipHistory = await _db.GroupMemberships
+            .AnyAsync(m =>
+                m.AthleteId == athleteId &&
+                m.TrainingGroup.CoachId == coachId.Value);
+
+        if (!hasMembershipHistory)
+        {
+            return NotFound(new
+            {
+                message = "Athlete not found in your group history."
+            });
+        }
+
+        if (!athlete.IsArchived)
+        {
+            return BadRequest(new
+            {
+                message = "Athlete is not archived."
+            });
+        }
+
+        athlete.IsArchived = false;
+
+        var updateResult = await _userManager.UpdateAsync(athlete);
+
+        if (!updateResult.Succeeded)
+        {
+            return BadRequest(new
+            {
+                errors = updateResult.Errors.Select(e => e.Description)
+            });
+        }
+
+        return Ok(new
+        {
+            message = "Athlete restored.",
+            AthleteId = athlete.Id,
+            athlete.IsArchived
+        });
+    }
+
     [HttpGet("{id:int}/athletes/available")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> GetAvailableAthletesForGroup(int id)
@@ -192,11 +503,7 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        // Проверяем, что группа принадлежит текущему тренеру.
-        var groupExists = await _db.TrainingGroups
-            .AnyAsync(g =>
-                g.TrainingGroupId == id &&
-                g.CoachId == coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
 
         if (!groupExists)
         {
@@ -206,22 +513,22 @@ public class GroupsController : ControllerBase
             });
         }
 
-        // Получаем ID спортсменов, которые сейчас в группе.
         var activeAthleteIds = await _db.GroupMemberships
             .AsNoTracking()
             .Where(m =>
                 m.TrainingGroupId == id &&
-                m.LeftDate == null)
+                m.LeftDate == null &&
+                !m.Athlete.IsArchived)
             .Select(m => m.AthleteId)
             .ToListAsync();
 
-        // Получаем всех зарегистрированных спортсменов.
         var allAthletes = await _userManager
             .GetUsersInRoleAsync("Athlete");
 
-        // Исключаем действующих участников выбранной группы.
         var availableAthletes = allAthletes
-            .Where(a => !activeAthleteIds.Contains(a.Id))
+            .Where(a =>
+                !a.IsArchived &&
+                !activeAthleteIds.Contains(a.Id))
             .OrderBy(a => a.Surname)
             .ThenBy(a => a.Name)
             .Select(a => new
@@ -245,10 +552,7 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var groupExists = await _db.TrainingGroups
-            .AnyAsync(g =>
-                g.TrainingGroupId == id &&
-                g.CoachId == coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
 
         if (!groupExists)
         {
@@ -262,7 +566,8 @@ public class GroupsController : ControllerBase
             .AsNoTracking()
             .Where(m =>
                 m.TrainingGroupId == id &&
-                m.LeftDate == null)
+                m.LeftDate == null &&
+                !m.Athlete.IsArchived)
             .OrderBy(m => m.Athlete.Surname)
             .ThenBy(m => m.Athlete.Name)
             .Select(m => new
@@ -289,11 +594,7 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        // Проверяем, что группа принадлежит этому тренеру.
-        var groupExists = await _db.TrainingGroups
-            .AnyAsync(g =>
-                g.TrainingGroupId == id &&
-                g.CoachId == coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
 
         if (!groupExists)
         {
@@ -303,7 +604,6 @@ public class GroupsController : ControllerBase
             });
         }
 
-        // Находим действующее членство спортсмена.
         var membership = await _db.GroupMemberships
             .FirstOrDefaultAsync(m =>
                 m.TrainingGroupId == id &&
@@ -319,7 +619,6 @@ public class GroupsController : ControllerBase
             });
         }
 
-        // Сохраняем историю, не удаляя запись.
         membership.LeftDate = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
@@ -327,8 +626,6 @@ public class GroupsController : ControllerBase
         return NoContent();
     }
 
-
-    
     [HttpPost("{id:int}/athletes")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> AddAthleteToGroup(
@@ -340,11 +637,7 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        // Проверяем, что группа принадлежит текущему тренеру.
-        var groupExists = await _db.TrainingGroups
-            .AnyAsync(g =>
-                g.TrainingGroupId == id &&
-                g.CoachId == coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
 
         if (!groupExists)
         {
@@ -354,20 +647,19 @@ public class GroupsController : ControllerBase
             });
         }
 
-        // Проверяем, что пользователь существует и является спортсменом.
         var athlete = await _userManager.FindByIdAsync(
             dto.AthleteId.ToString());
 
         if (athlete is null ||
+            athlete.IsArchived ||
             !await _userManager.IsInRoleAsync(athlete, "Athlete"))
         {
             return NotFound(new
             {
-                message = "Athlete not found."
+                message = "Active athlete not found."
             });
         }
 
-        // Не допускаем повторное активное членство в группе.
         var alreadyMember = await _db.GroupMemberships
             .AnyAsync(m =>
                 m.TrainingGroupId == id &&
@@ -386,7 +678,6 @@ public class GroupsController : ControllerBase
         var today = now.Date;
         var currentTime = TimeOnly.FromDateTime(now);
 
-        // Создаём членство в группе.
         var membership = new GroupMembership
         {
             TrainingGroupId = id,
@@ -396,7 +687,6 @@ public class GroupsController : ControllerBase
 
         _db.GroupMemberships.Add(membership);
 
-        // Находим тренировки этой группы, которые ещё не начались.
         var futureTrainings = await _db.Trainings
             .Where(t =>
                 t.TrainingGroupId == id &&
@@ -406,7 +696,6 @@ public class GroupsController : ControllerBase
             .Select(t => t.TrainingId)
             .ToListAsync();
 
-        // Получаем тренировки, где спортсмен ещё не назначен участником.
         var existingTrainingIds = await _db.TrainingParticipants
             .Where(p =>
                 p.AthleteId == dto.AthleteId &&
@@ -429,7 +718,6 @@ public class GroupsController : ControllerBase
         if (newParticipants.Count > 0)
             _db.TrainingParticipants.AddRange(newParticipants);
 
-        // Сохраняем членство и назначения участников вместе.
         await _db.SaveChangesAsync();
 
         return Created(
@@ -443,5 +731,4 @@ public class GroupsController : ControllerBase
                 AddedToFutureTrainings = newParticipants.Count
             });
     }
-
 }

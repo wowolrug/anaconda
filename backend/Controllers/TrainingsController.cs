@@ -537,6 +537,102 @@ public class TrainingsController : ControllerBase
         });
     }
 
+    [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> DeleteTraining(int id)
+    {
+        if (!TryGetCurrentUserId(out var coachId))
+            return Unauthorized();
+
+        var training = await _db.Trainings
+            .FirstOrDefaultAsync(t => t.TrainingId == id);
+
+        if (training is null)
+        {
+            return NotFound(new
+            {
+                message = "Training not found."
+            });
+        }
+
+        // Тренер может удалить только собственную тренировку.
+        if (training.CoachId != coachId)
+            return Forbid();
+
+        _db.Trainings.Remove(training);
+
+        // Участники удалятся каскадно.
+        // Заметки сохранятся благодаря SetNull.
+        await _db.SaveChangesAsync();
+
+        return Ok(new
+        {
+            message = "Training deleted.",
+            TrainingId = id
+        });
+    }
+
+
+    [HttpGet("my-attendance")]
+    [Authorize(Roles = "Athlete")]
+    public async Task<IActionResult> GetMyAttendance()
+    {
+        if (!TryGetCurrentUserId(out var athleteId))
+            return Unauthorized();
+
+        var records = await _db.TrainingParticipants
+            .AsNoTracking()
+            .Where(p => p.AthleteId == athleteId)
+            .OrderByDescending(p => p.Training.Date)
+            .ThenByDescending(p => p.Training.StartTime)
+            .Select(p => new
+            {
+                p.TrainingId,
+                p.Training.Date,
+                p.Training.StartTime,
+                p.Training.EndTime,
+                p.Training.Type,
+                p.Training.Status,
+                p.Training.Description,
+                CoachName = p.Training.Coach.Name + " " +
+                            p.Training.Coach.Surname,
+                GroupName = p.Training.TrainingGroup != null
+                    ? p.Training.TrainingGroup.Name
+                    : null,
+                AttendanceStatus = p.Status
+            })
+            .ToListAsync();
+
+        var moscowNow = GetMoscowNow();
+
+        var result = records.Select(r =>
+        {
+            var training = new Training
+            {
+                Date = r.Date,
+                StartTime = r.StartTime,
+                EndTime = r.EndTime,
+                Status = r.Status
+            };
+
+            return new
+            {
+                r.TrainingId,
+                r.Date,
+                r.StartTime,
+                r.EndTime,
+                r.Type,
+                TrainingStatus = GetActualStatus(training, moscowNow),
+                r.Description,
+                r.CoachName,
+                r.GroupName,
+                r.AttendanceStatus
+            };
+        });
+
+        return Ok(result);
+    }
+
     [HttpGet("{id:int}/attendance")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> GetAttendance(int id)

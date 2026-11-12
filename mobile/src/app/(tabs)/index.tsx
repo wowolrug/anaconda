@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/api/client';
 import {
   getCurrentRole,
+  getCurrentUser,
   restoreSession,
   subscribeRole,
 } from '@/api/auth';
@@ -37,6 +38,34 @@ type AttendanceRecord = {
   status: string | number;
 };
 
+type MyAttendanceRecord = {
+  trainingId: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+  type: string | number;
+  trainingStatus: string | number;
+  description: string;
+  coachName: string;
+  groupName: string | null;
+  attendanceStatus: string | number;
+};
+
+type PhysicalMeasurement = {
+  physicalMeasurementId: number;
+  athleteId: number;
+  type: number | string | null;
+  groupMetricId: number | null;
+  groupMetricName: string | null;
+  groupMetricUnit: string | null;
+  trainingGroupId: number | null;
+  value: number | string;
+  measuredAt: string;
+  note: string | null;
+  recordedByUserId?: number;
+  recordedByName?: string | null;
+};
+
 function getDateKey(value: string) {
   return value.split('T')[0];
 }
@@ -57,6 +86,16 @@ function formatDate(value: string) {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
+  });
+}
+
+function formatMeasurementDate(value: string) {
+  const [year, month, day] = getDateKey(value).split('-').map(Number);
+
+  return new Date(year, month - 1, day).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
   });
 }
 
@@ -162,8 +201,32 @@ function getAttendanceKind(status: string | number) {
   return 'unmarked';
 }
 
+function getAttendanceLabel(status: string | number) {
+  const labels: Record<string, string> = {
+    present: 'Присутствовал',
+    absent: 'Отсутствовал',
+    late: 'Опоздал',
+    excused: 'Уважительная причина',
+    unmarked: 'Не отмечено',
+  };
+
+  return labels[getAttendanceKind(status)];
+}
+
+function getAttendanceColor(status: string | number) {
+  const colors: Record<string, string> = {
+    present: '#16A34A',
+    absent: '#DC2626',
+    late: '#D97706',
+    excused: '#2563EB',
+    unmarked: '#6B7280',
+  };
+
+  return colors[getAttendanceKind(status)];
+}
+
 function calculateAttendance(records: AttendanceRecord[]) {
-  // Учитываем отмеченные статусы: присутствовал, отсутствовал, опоздал.
+  // Учитываем присутствие, отсутствие и опоздание.
   // Неотмеченные и уважительные пропуски исключаются.
   const counted = records.filter((record) => {
     const kind = getAttendanceKind(record.status);
@@ -182,12 +245,41 @@ function calculateAttendance(records: AttendanceRecord[]) {
   return Math.round((attended / counted.length) * 100);
 }
 
+function calculatePersonalAttendance(records: MyAttendanceRecord[]) {
+  return {
+    total: records.length,
+    present: records.filter(
+      (r) => getAttendanceKind(r.attendanceStatus) === 'present',
+    ).length,
+    absent: records.filter(
+      (r) => getAttendanceKind(r.attendanceStatus) === 'absent',
+    ).length,
+    late: records.filter(
+      (r) => getAttendanceKind(r.attendanceStatus) === 'late',
+    ).length,
+    excused: records.filter(
+      (r) => getAttendanceKind(r.attendanceStatus) === 'excused',
+    ).length,
+  };
+}
+
 export default function HomeScreen() {
   const router = useRouter();
 
   const [trainings, setTrainings] = useState<Training[]>([]);
   const [coachName, setCoachName] = useState('Тренер');
   const [attendance, setAttendance] = useState<number | null>(null);
+
+  const [measurements, setMeasurements] = useState<PhysicalMeasurement[]>([]);
+  const [measurementsError, setMeasurementsError] = useState<string | null>(
+    null,
+  );
+
+  const [myAttendance, setMyAttendance] = useState<MyAttendanceRecord[]>([]);
+  const [myAttendanceError, setMyAttendanceError] = useState<string | null>(
+    null,
+  );
+
   const [role, setRole] = useState<string | null>(getCurrentRole);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -210,6 +302,59 @@ export default function HomeScreen() {
       const currentRole = getCurrentRole();
 
       setRole(currentRole);
+
+      // Спортсмен загружает только собственные данные.
+      if (currentRole?.toLowerCase() === 'athlete') {
+        const user = getCurrentUser();
+
+        if (user?.userId != null) {
+          // Физические показатели.
+          try {
+            const measurementsResponse = await api.get<
+              PhysicalMeasurement[]
+            >(`/PhysicalMeasurements/athlete/${user.userId}`);
+
+            const sortedMeasurements = [...measurementsResponse.data].sort(
+              (a, b) =>
+                new Date(b.measuredAt).getTime() -
+                new Date(a.measuredAt).getTime(),
+            );
+
+            setMeasurements(sortedMeasurements);
+            setMeasurementsError(null);
+          } catch {
+            setMeasurements([]);
+            setMeasurementsError(
+              'Не удалось загрузить физические показатели.',
+            );
+          }
+
+          // Личная посещаемость.
+          try {
+            const attendanceResponse = await api.get<MyAttendanceRecord[]>(
+              '/Trainings/my-attendance',
+            );
+
+            setMyAttendance(attendanceResponse.data);
+            setMyAttendanceError(null);
+          } catch {
+            setMyAttendance([]);
+            setMyAttendanceError(
+              'Не удалось загрузить историю посещаемости.',
+            );
+          }
+        } else {
+          setMeasurements([]);
+          setMeasurementsError('Не удалось определить аккаунт спортсмена.');
+          setMyAttendance([]);
+          setMyAttendanceError('Не удалось определить аккаунт спортсмена.');
+        }
+      } else {
+        setMeasurements([]);
+        setMeasurementsError(null);
+        setMyAttendance([]);
+        setMyAttendanceError(null);
+      }
 
       const response = await api.get<Training[]>('/Trainings');
       const data = response.data;
@@ -324,6 +469,40 @@ export default function HomeScreen() {
     (total, training) => total + training.participantsCount,
     0,
   );
+
+  // Берём последнее измерение каждой пользовательской метрики.
+  const seenMetricIds = new Set<number>();
+
+  const latestMeasurements = measurements.filter((measurement) => {
+    if (
+      measurement.groupMetricId == null ||
+      !measurement.groupMetricName ||
+      seenMetricIds.has(measurement.groupMetricId)
+    ) {
+      return false;
+    }
+
+    seenMetricIds.add(measurement.groupMetricId);
+    return true;
+  });
+
+  const attendanceStats = calculatePersonalAttendance(myAttendance);
+
+  const attendanceCounted =
+    attendanceStats.present +
+    attendanceStats.absent +
+    attendanceStats.late;
+
+  const personalAttendancePercent =
+    attendanceCounted > 0
+      ? Math.round(
+          ((attendanceStats.present + attendanceStats.late) /
+            attendanceCounted) *
+            100,
+        )
+      : null;
+
+  const recentAttendance = myAttendance.slice(0, 10);
 
   const today = new Date().toLocaleDateString('ru-RU', {
     day: 'numeric',
@@ -554,37 +733,235 @@ export default function HomeScreen() {
                 </View>
               </>
             ) : (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>
-                  {isParent ? 'Расписание ребёнка' : 'Моё расписание'}
-                </Text>
+              <>
+                <View style={styles.section}>
+                  <Text style={styles.sectionTitle}>
+                    {isParent ? 'Расписание ребёнка' : 'Моё расписание'}
+                  </Text>
 
-                <View style={styles.statsRow}>
-                  <StatCard
-                    value={todayTrainings.length}
-                    label={getCountLabel(todayTrainings.length, [
-                      'тренировка сегодня',
-                      'тренировки сегодня',
-                      'тренировок сегодня',
-                    ])}
-                  />
+                  <View style={styles.statsRow}>
+                    <StatCard
+                      value={todayTrainings.length}
+                      label={getCountLabel(todayTrainings.length, [
+                        'тренировка сегодня',
+                        'тренировки сегодня',
+                        'тренировок сегодня',
+                      ])}
+                    />
 
-                  <StatCard
-                    value={upcomingTrainings.length}
-                    label="предстоящих занятий"
-                  />
+                    <StatCard
+                      value={upcomingTrainings.length}
+                      label="предстоящих занятий"
+                    />
+                  </View>
+
+                  <Pressable
+                    style={styles.scheduleButton}
+                    onPress={openAllTrainings}
+                  >
+                    <Text style={styles.scheduleButtonText}>
+                      Все тренировки
+                    </Text>
+                    <Text style={styles.scheduleButtonArrow}>›</Text>
+                  </Pressable>
                 </View>
 
-                <Pressable
-                  style={styles.scheduleButton}
-                  onPress={openAllTrainings}
-                >
-                  <Text style={styles.scheduleButtonText}>
-                    Все тренировки
-                  </Text>
-                  <Text style={styles.scheduleButtonArrow}>›</Text>
-                </Pressable>
-              </View>
+                {isAthlete && (
+                  <>
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>
+                        Мои физические показатели
+                      </Text>
+
+                      {measurementsError ? (
+                        <Text style={styles.error}>
+                          {measurementsError}
+                        </Text>
+                      ) : latestMeasurements.length === 0 ? (
+                        <View style={styles.emptyCard}>
+                          <Text style={styles.emptyTitle}>
+                            Пока нет показателей
+                          </Text>
+
+                          <Text style={styles.emptySubtitle}>
+                            Когда тренер добавит измерения, они появятся здесь.
+                          </Text>
+                        </View>
+                      ) : (
+                        <View style={styles.measurementsList}>
+                          {latestMeasurements.map((measurement) => (
+                            <View
+                              key={measurement.groupMetricId}
+                              style={styles.measurementCard}
+                            >
+                              <View style={styles.measurementInfo}>
+                                <Text style={styles.measurementName}>
+                                  {measurement.groupMetricName}
+                                </Text>
+
+                                <Text style={styles.measurementDate}>
+                                  {formatMeasurementDate(
+                                    measurement.measuredAt,
+                                  )}
+                                </Text>
+                              </View>
+
+                              <Text style={styles.measurementValue}>
+                                {Number(measurement.value).toLocaleString(
+                                  'ru-RU',
+                                  {
+                                    maximumFractionDigits: 2,
+                                  },
+                                )}
+                                {measurement.groupMetricUnit
+                                  ? ` ${measurement.groupMetricUnit}`
+                                  : ''}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={styles.section}>
+                      <Text style={styles.sectionTitle}>
+                        Моя посещаемость
+                      </Text>
+
+                      {myAttendanceError ? (
+                        <Text style={styles.error}>
+                          {myAttendanceError}
+                        </Text>
+                      ) : myAttendance.length === 0 ? (
+                        <View style={styles.emptyCard}>
+                          <Text style={styles.emptyTitle}>
+                            История пока пуста
+                          </Text>
+
+                          <Text style={styles.emptySubtitle}>
+                            Когда появятся тренировки, здесь будет отображаться
+                            твоя посещаемость.
+                          </Text>
+                        </View>
+                      ) : (
+                        <>
+                          <View style={styles.statsRow}>
+                            <StatCard
+                              value={attendanceStats.total}
+                              label="всего тренировок"
+                            />
+
+                            <StatCard
+                              value={
+                                personalAttendancePercent === null
+                                  ? '—'
+                                  : `${personalAttendancePercent}%`
+                              }
+                              label="посещаемость"
+                            />
+                          </View>
+
+                          <View
+                            style={[
+                              styles.statsRow,
+                              { marginTop: 8 },
+                            ]}
+                          >
+                            <StatCard
+                              value={attendanceStats.present}
+                              label="присутствовал"
+                            />
+
+                            <StatCard
+                              value={attendanceStats.absent}
+                              label="отсутствовал"
+                            />
+                          </View>
+
+                          <View
+                            style={[
+                              styles.statsRow,
+                              { marginTop: 8 },
+                            ]}
+                          >
+                            <StatCard
+                              value={attendanceStats.late}
+                              label="опоздал"
+                            />
+
+                            <StatCard
+                              value={attendanceStats.excused}
+                              label="уважительная причина"
+                            />
+                          </View>
+
+                          <Text style={styles.attendanceSubtitle}>
+                            Последние тренировки
+                          </Text>
+
+                          {recentAttendance.map((record, index) => (
+                            <View
+                              key={`${record.trainingId}-${index}`}
+                              style={styles.attendanceCard}
+                            >
+                              <View style={styles.attendanceInfo}>
+                                <Text style={styles.attendanceTraining}>
+                                  {getTrainingType(record.type)}
+                                </Text>
+
+                                <Text style={styles.attendanceDate}>
+                                  {formatDate(record.date)} ·{' '}
+                                  {formatTime(record.startTime)}
+                                </Text>
+
+                                <Text style={styles.attendanceCoach}>
+                                  {record.groupName ?? 'Без группы'}
+                                  {record.coachName
+                                    ? ` · ${record.coachName}`
+                                    : ''}
+                                </Text>
+                              </View>
+
+                              <View
+                                style={[
+                                  styles.attendanceBadge,
+                                  {
+                                    backgroundColor: `${getAttendanceColor(
+                                      record.attendanceStatus,
+                                    )}18`,
+                                  },
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.attendanceBadgeText,
+                                    {
+                                      color: getAttendanceColor(
+                                        record.attendanceStatus,
+                                      ),
+                                    },
+                                  ]}
+                                >
+                                  {getAttendanceLabel(
+                                    record.attendanceStatus,
+                                  )}
+                                </Text>
+                              </View>
+                            </View>
+                          ))}
+
+                          {myAttendance.length > 10 && (
+                            <Text style={styles.attendanceFooter}>
+                              Показаны последние 10 из {myAttendance.length}{' '}
+                              тренировок.
+                            </Text>
+                          )}
+                        </>
+                      )}
+                    </View>
+                  </>
+                )}
+              </>
             )}
 
             <View style={styles.section}>
@@ -933,6 +1310,89 @@ const styles = StyleSheet.create({
   scheduleButtonArrow: {
     fontSize: 24,
     color: '#6B7280',
+  },
+  measurementsList: {
+    gap: 10,
+  },
+  measurementCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  measurementInfo: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  measurementName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  measurementDate: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 5,
+  },
+  measurementValue: {
+    fontSize: 19,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  attendanceSubtitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 22,
+    marginBottom: 12,
+  },
+  attendanceCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  attendanceInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  attendanceTraining: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  attendanceDate: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  attendanceCoach: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 4,
+  },
+  attendanceBadge: {
+    maxWidth: 145,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
+  },
+  attendanceBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  attendanceFooter: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 4,
   },
   listCard: {
     backgroundColor: '#FFFFFF',

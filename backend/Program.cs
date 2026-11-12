@@ -1,11 +1,11 @@
 using System.Text;
 using backend.Data;
 using backend.Models;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -61,6 +61,35 @@ builder.Services
                 Encoding.UTF8.GetBytes(jwtKey)),
 
             ClockSkew = TimeSpan.FromSeconds(30)
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?
+                    .FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+                if (!int.TryParse(userIdValue, out var userId))
+                {
+                    context.Fail("Invalid user.");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices
+                    .GetRequiredService<ApplicationDbContext>();
+
+                var isActive = await db.Users
+                    .AsNoTracking()
+                    .AnyAsync(u =>
+                        u.Id == userId &&
+                        !u.IsArchived);
+
+                if (!isActive)
+                {
+                    context.Fail("This account has been archived.");
+                }
+            }
         };
     });
 
