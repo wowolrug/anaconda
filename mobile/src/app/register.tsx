@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import api from '@/api/client';
+import { api } from '@/api/client';
 
 type TextInputRef = React.ComponentRef<typeof TextInput>;
 type ScrollViewRef = React.ComponentRef<typeof ScrollView>;
@@ -26,42 +26,48 @@ interface RegisterResponse {
   profileLinkStatus?: string;
 }
 
+
 function translateIdentityError(message: string): string {
   const normalized = message.toLowerCase();
 
   if (
     normalized.includes('passwordrequiresdigit') ||
+    normalized.includes('at least one digit') ||
     normalized.includes('digit')
   ) {
-    return 'Пароль не должен содержать обязательные цифры.';
+    return 'Пароль должен содержать хотя бы одну цифру.';
   }
 
   if (
     normalized.includes('passwordrequiresuppercase') ||
+    normalized.includes('at least one uppercase') ||
     normalized.includes('uppercase')
   ) {
-    return 'Пароль не должен содержать обязательные заглавные буквы.';
+    return 'Пароль должен содержать хотя бы одну заглавную латинскую букву.';
   }
 
   if (
     normalized.includes('passwordrequireslowercase') ||
+    normalized.includes('at least one lowercase') ||
     normalized.includes('lowercase')
   ) {
-    return 'Пароль не должен содержать обязательные строчные буквы.';
+    return 'Пароль должен содержать хотя бы одну строчную латинскую букву.';
   }
 
   if (
     normalized.includes('passwordrequiresnonalphanumeric') ||
+    normalized.includes('non alphanumeric') ||
     normalized.includes('nonalphanumeric')
   ) {
-    return 'Пароль не должен содержать обязательные специальные символы.';
+    return 'Пароль должен содержать хотя бы один специальный символ, например ! или @.';
   }
 
   if (
     normalized.includes('passwordtooshort') ||
+    normalized.includes('passwords must be at least') ||
     normalized.includes('password')
   ) {
-    return 'Пароль должен содержать не менее 6 символов.';
+    return 'Пароль не соответствует требованиям безопасности.';
   }
 
   if (
@@ -73,10 +79,7 @@ function translateIdentityError(message: string): string {
     return 'Пользователь с таким email уже зарегистрирован.';
   }
 
-  if (
-    normalized.includes('invalid email') ||
-    normalized.includes('email')
-  ) {
+  if (normalized.includes('invalid email') || normalized.includes('email')) {
     return 'Проверьте правильность email.';
   }
 
@@ -86,6 +89,7 @@ function translateIdentityError(message: string): string {
 
   return message;
 }
+
 
 function getServerErrorMessage(error: any): string {
   const data = error?.response?.data;
@@ -546,10 +550,11 @@ export default function RegisterScreen() {
   );
 }
 
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#101114',
+    backgroundColor: '#000000',
   },
   keyboardContainer: {
     flex: 1,
@@ -573,7 +578,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   backButtonText: {
-    color: '#E0A526',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
   },
@@ -590,9 +595,11 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
   formCard: {
-    backgroundColor: '#1B1D22',
+    backgroundColor: '#171717',
     borderRadius: 16,
     padding: 20,
+    borderWidth: 1,
+    borderColor: '#303030',
   },
   inputGroup: {
     marginBottom: 18,
@@ -605,22 +612,22 @@ const styles = StyleSheet.create({
   },
   input: {
     height: 52,
-    backgroundColor: '#292C33',
+    backgroundColor: '#242424',
     borderRadius: 10,
     paddingHorizontal: 14,
     color: '#FFFFFF',
     fontSize: 15,
     borderWidth: 1,
-    borderColor: '#393C44',
+    borderColor: '#414141',
   },
   passwordContainer: {
     minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#292C33',
+    backgroundColor: '#242424',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#393C44',
+    borderColor: '#414141',
   },
   passwordInput: {
     flex: 1,
@@ -634,36 +641,38 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   passwordToggleText: {
-    color: '#E0A526',
+    color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '600',
   },
   errorContainer: {
-    backgroundColor: '#3A2024',
+    backgroundColor: '#292929',
+    borderWidth: 1,
+    borderColor: '#777777',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
   },
   errorText: {
-    color: '#FF7777',
+    color: '#FFFFFF',
     fontSize: 13,
     lineHeight: 19,
   },
   primaryButton: {
     height: 54,
-    backgroundColor: '#D99B20',
+    backgroundColor: '#FFFFFF',
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
   },
   primaryButtonText: {
-    color: '#171717',
+    color: '#000000',
     fontSize: 16,
     fontWeight: '700',
   },
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
   footer: {
     flexDirection: 'row',
@@ -677,7 +686,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   footerLink: {
-    color: '#E0A526',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -686,18 +695,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 28,
+    backgroundColor: '#000000',
   },
   successIcon: {
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: '#D99B20',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 24,
   },
   successIconText: {
-    color: '#171717',
+    color: '#000000',
     fontSize: 40,
     fontWeight: '700',
   },
@@ -716,3 +726,4 @@ const styles = StyleSheet.create({
     marginBottom: 28,
   },
 });
+
