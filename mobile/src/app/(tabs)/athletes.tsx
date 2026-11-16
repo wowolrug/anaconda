@@ -3,7 +3,9 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -94,7 +96,6 @@ export default function AthletesScreen() {
   const [newAthleteName, setNewAthleteName] = useState('');
   const [newAthleteSurname, setNewAthleteSurname] = useState('');
   const [newAthleteGender, setNewAthleteGender] = useState(0);
-  const [newAthleteBeltColor, setNewAthleteBeltColor] = useState('');
 
   function openAthlete(athlete: Athlete) {
     router.push({
@@ -296,7 +297,6 @@ export default function AthletesScreen() {
         name,
         surname,
         gender: newAthleteGender,
-        beltColor: newAthleteBeltColor.trim() || null,
         weightCategory: 0,
       });
 
@@ -306,7 +306,6 @@ export default function AthletesScreen() {
       setNewAthleteName('');
       setNewAthleteSurname('');
       setNewAthleteGender(0);
-      setNewAthleteBeltColor('');
       setShowCreateAthleteModal(false);
 
       Alert.alert(
@@ -1034,12 +1033,24 @@ export default function AthletesScreen() {
         visible={showCreateAthleteModal}
         transparent
         animationType="slide"
+        statusBarTranslucent
         onRequestClose={() => {
           if (!creatingAthlete) setShowCreateAthleteModal(false);
         }}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.createModalCard}>
+          <KeyboardAvoidingView
+            style={styles.createKeyboardContainer}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <ScrollView
+              style={styles.createModalScroll}
+              contentContainerStyle={styles.createModalScrollContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.createModalCard}>
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleContainer}>
                 <Text style={styles.modalTitle}>Новый спортсмен</Text>
@@ -1118,21 +1129,6 @@ export default function AthletesScreen() {
               </Pressable>
             </View>
 
-            <Text style={styles.inputLabel}>Цвет пояса</Text>
-            <TextInput
-              style={styles.groupInput}
-              placeholder="Например, белый"
-              placeholderTextColor="#9CA3AF"
-              value={newAthleteBeltColor}
-              onChangeText={setNewAthleteBeltColor}
-              maxLength={100}
-              editable={!creatingAthlete}
-            />
-
-            <Text style={styles.formHint}>
-              Весовая категория пока останется «Не указана». Её можно будет заполнить отдельно.
-            </Text>
-
             <Pressable
               style={[styles.createSubmitButton, creatingAthlete && styles.disabledButton]}
               onPress={() => void createAthlete()}
@@ -1152,7 +1148,9 @@ export default function AthletesScreen() {
             >
               <Text style={styles.modalCancelText}>Отмена</Text>
             </Pressable>
-          </View>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -1386,6 +1384,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#E5E7EB', borderRadius: 13, marginTop: 12,
   },
   modalCancelText: { fontSize: 14, fontWeight: '700', color: '#374151' },
+  createKeyboardContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  createModalScroll: {
+    flexGrow: 0,
+    maxHeight: '90%',
+  },
+  createModalScrollContent: {
+    flexGrow: 0,
+  },
   createModalCard: {
     backgroundColor: '#F5F6F8', borderTopLeftRadius: 24,
     borderTopRightRadius: 24, padding: 22, paddingBottom: 32,

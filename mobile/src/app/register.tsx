@@ -1,7 +1,8 @@
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -25,7 +26,6 @@ interface RegisterResponse {
   profileLinked?: boolean;
   profileLinkStatus?: string;
 }
-
 
 function translateIdentityError(message: string): string {
   const normalized = message.toLowerCase();
@@ -89,7 +89,6 @@ function translateIdentityError(message: string): string {
 
   return message;
 }
-
 
 function getServerErrorMessage(error: any): string {
   const data = error?.response?.data;
@@ -166,9 +165,7 @@ export default function RegisterScreen() {
   const passwordRef = useRef<TextInputRef>(null);
   const confirmPasswordRef = useRef<TextInputRef>(null);
 
-  const formCardY = useRef(0);
-
-  const inputPositions = useRef<Record<string, number>>({});
+  const shouldScrollToBottom = useRef(false);
 
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
@@ -184,29 +181,48 @@ export default function RegisterScreen() {
   const [errorMessage, setErrorMessage] = useState('');
   const [registered, setRegistered] = useState(false);
 
-  const handleInputLayout = (key: string, y: number) => {
-    inputPositions.current[key] = y;
-  };
-
-  const handleInputFocus = (key: string) => {
-    const inputY = inputPositions.current[key];
-
-    if (inputY === undefined) {
-      return;
-    }
-
+  const scrollToBottom = () => {
     setTimeout(() => {
-      scrollRef.current?.scrollTo({
-        y: Math.max(0, formCardY.current + inputY - 30),
+      scrollRef.current?.scrollToEnd({
         animated: true,
       });
-    }, Platform.OS === 'android' ? 300 : 150);
+    }, 300);
   };
 
+  const handleConfirmPasswordFocus = () => {
+    shouldScrollToBottom.current = true;
+    scrollToBottom();
+  };
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      'keyboardDidShow',
+      () => {
+        if (shouldScrollToBottom.current) {
+          setTimeout(() => {
+            scrollRef.current?.scrollToEnd({
+              animated: true,
+            });
+          }, 100);
+        }
+      }
+    );
+
+    const hideSubscription = Keyboard.addListener(
+      'keyboardDidHide',
+      () => {
+        shouldScrollToBottom.current = false;
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
   const submitRegistration = async () => {
-    if (submitting) {
-      return;
-    }
+    if (submitting) return;
 
     setErrorMessage('');
 
@@ -276,6 +292,7 @@ export default function RegisterScreen() {
         role: 'Athlete',
       });
 
+      Keyboard.dismiss();
       setRegistered(true);
     } catch (error: any) {
       setErrorMessage(getServerErrorMessage(error));
@@ -292,17 +309,24 @@ export default function RegisterScreen() {
             <Text style={styles.successIconText}>✓</Text>
           </View>
 
-          <Text style={styles.successTitle}>Регистрация завершена!</Text>
+          <Text style={styles.successTitle}>
+            Регистрация завершена!
+          </Text>
 
           <Text style={styles.successText}>
             Аккаунт успешно создан. Теперь вы можете войти в приложение.
           </Text>
 
           <Pressable
-            style={styles.primaryButton}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              pressed && styles.buttonPressed,
+            ]}
             onPress={() => router.replace('/login')}
           >
-            <Text style={styles.primaryButtonText}>Перейти ко входу</Text>
+            <Text style={styles.primaryButtonText}>
+              Перейти ко входу
+            </Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -310,137 +334,122 @@ export default function RegisterScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.keyboardContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
           ref={scrollRef}
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
+          keyboardDismissMode={
+            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
           showsVerticalScrollIndicator={false}
         >
           <View style={styles.container}>
             <Pressable
               style={styles.backButton}
               onPress={() => router.back()}
+              hitSlop={8}
             >
               <Text style={styles.backButtonText}>‹ Назад</Text>
             </Pressable>
 
-            <Text style={styles.title}>Создание аккаунта</Text>
+            <View style={styles.header}>
+              <Text style={styles.eyebrow}>ANACONDA</Text>
 
-            <Text style={styles.subtitle}>
-              Заполните данные для регистрации спортсмена
-            </Text>
+              <Text style={styles.title}>Создание аккаунта</Text>
 
-            <View
-              style={styles.formCard}
-              onLayout={(event) => {
-                formCardY.current = event.nativeEvent.layout.y;
-              }}
-            >
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout('name', event.nativeEvent.layout.y)
-                }
-              >
+              <Text style={styles.subtitle}>
+                Заполните данные, чтобы начать работу с приложением.
+              </Text>
+            </View>
+
+            <View style={styles.formCard}>
+              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Имя</Text>
+
                 <TextInput
                   ref={nameRef}
                   style={styles.input}
                   placeholder="Введите имя"
-                  placeholderTextColor="#888"
+                  placeholderTextColor="#999999"
                   value={name}
                   onChangeText={setName}
-                  onFocus={() => handleInputFocus('name')}
                   autoCapitalize="words"
                   autoCorrect={false}
                   returnKeyType="next"
                   onSubmitEditing={() => surnameRef.current?.focus()}
                   maxLength={100}
+                  selectionColor="#111111"
                 />
               </View>
 
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout('surname', event.nativeEvent.layout.y)
-                }
-              >
+              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Фамилия</Text>
+
                 <TextInput
                   ref={surnameRef}
                   style={styles.input}
                   placeholder="Введите фамилию"
-                  placeholderTextColor="#888"
+                  placeholderTextColor="#999999"
                   value={surname}
                   onChangeText={setSurname}
-                  onFocus={() => handleInputFocus('surname')}
                   autoCapitalize="words"
                   autoCorrect={false}
                   returnKeyType="next"
                   onSubmitEditing={() => emailRef.current?.focus()}
                   maxLength={100}
+                  selectionColor="#111111"
                 />
               </View>
 
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout('email', event.nativeEvent.layout.y)
-                }
-              >
+              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Email</Text>
+
                 <TextInput
                   ref={emailRef}
                   style={styles.input}
                   placeholder="example@mail.com"
-                  placeholderTextColor="#888"
+                  placeholderTextColor="#999999"
                   value={email}
                   onChangeText={setEmail}
-                  onFocus={() => handleInputFocus('email')}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
                   returnKeyType="next"
                   onSubmitEditing={() => phoneRef.current?.focus()}
                   maxLength={254}
+                  selectionColor="#111111"
                 />
               </View>
 
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout('phone', event.nativeEvent.layout.y)
-                }
-              >
-                <Text style={styles.label}>Телефон (необязательно)</Text>
+              <View style={styles.inputGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Телефон</Text>
+                  <Text style={styles.optionalLabel}>Необязательно</Text>
+                </View>
+
                 <TextInput
                   ref={phoneRef}
                   style={styles.input}
                   placeholder="+7 999 123-45-67"
-                  placeholderTextColor="#888"
+                  placeholderTextColor="#999999"
                   value={phone}
                   onChangeText={setPhone}
-                  onFocus={() => handleInputFocus('phone')}
                   keyboardType="phone-pad"
                   autoCapitalize="none"
                   returnKeyType="next"
                   onSubmitEditing={() => passwordRef.current?.focus()}
+                  selectionColor="#111111"
                 />
               </View>
 
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout('password', event.nativeEvent.layout.y)
-                }
-              >
+              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Пароль</Text>
 
                 <View style={styles.passwordContainer}>
@@ -448,21 +457,24 @@ export default function RegisterScreen() {
                     ref={passwordRef}
                     style={styles.passwordInput}
                     placeholder="Минимум 6 символов"
-                    placeholderTextColor="#888"
+                    placeholderTextColor="#999999"
                     value={password}
                     onChangeText={setPassword}
-                    onFocus={() => handleInputFocus('password')}
                     secureTextEntry={!showPassword}
                     autoCapitalize="none"
                     autoCorrect={false}
                     returnKeyType="next"
-                    onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                    onSubmitEditing={() =>
+                      confirmPasswordRef.current?.focus()
+                    }
                     maxLength={128}
+                    selectionColor="#111111"
                   />
 
                   <Pressable
                     style={styles.passwordToggle}
-                    onPress={() => setShowPassword(!showPassword)}
+                    onPress={() => setShowPassword((value) => !value)}
+                    hitSlop={8}
                   >
                     <Text style={styles.passwordToggleText}>
                       {showPassword ? 'Скрыть' : 'Показать'}
@@ -471,15 +483,7 @@ export default function RegisterScreen() {
                 </View>
               </View>
 
-              <View
-                style={styles.inputGroup}
-                onLayout={(event) =>
-                  handleInputLayout(
-                    'confirmPassword',
-                    event.nativeEvent.layout.y,
-                  )
-                }
-              >
+              <View style={styles.inputGroup}>
                 <Text style={styles.label}>Повторите пароль</Text>
 
                 <View style={styles.passwordContainer}>
@@ -487,23 +491,25 @@ export default function RegisterScreen() {
                     ref={confirmPasswordRef}
                     style={styles.passwordInput}
                     placeholder="Повторите пароль"
-                    placeholderTextColor="#888"
+                    placeholderTextColor="#999999"
                     value={confirmPassword}
                     onChangeText={setConfirmPassword}
-                    onFocus={() => handleInputFocus('confirmPassword')}
+                    onFocus={handleConfirmPasswordFocus}
                     secureTextEntry={!showConfirmPassword}
                     autoCapitalize="none"
                     autoCorrect={false}
                     returnKeyType="done"
                     onSubmitEditing={submitRegistration}
                     maxLength={128}
+                    selectionColor="#111111"
                   />
 
                   <Pressable
                     style={styles.passwordToggle}
                     onPress={() =>
-                      setShowConfirmPassword(!showConfirmPassword)
+                      setShowConfirmPassword((value) => !value)
                     }
+                    hitSlop={8}
                   >
                     <Text style={styles.passwordToggleText}>
                       {showConfirmPassword ? 'Скрыть' : 'Показать'}
@@ -514,35 +520,54 @@ export default function RegisterScreen() {
 
               {!!errorMessage && (
                 <View style={styles.errorContainer}>
+                  <Text style={styles.errorIcon}>!</Text>
                   <Text style={styles.errorText}>{errorMessage}</Text>
                 </View>
               )}
 
               <Pressable
-                style={[
+                style={({ pressed }) => [
                   styles.primaryButton,
                   submitting && styles.disabledButton,
+                  pressed && !submitting && styles.buttonPressed,
                 ]}
                 onPress={submitRegistration}
                 disabled={submitting}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <Text style={styles.primaryButtonText}>
                     Зарегистрироваться
                   </Text>
                 )}
               </Pressable>
+
+              <Text style={styles.formHint}>
+                Создавая аккаунт, вы подтверждаете правильность введённых данных.
+              </Text>
             </View>
 
             <View style={styles.footer}>
               <Text style={styles.footerText}>Уже есть аккаунт?</Text>
 
-              <Pressable onPress={() => router.replace('/login')}>
+              <Pressable
+                onPress={() => router.replace('/login')}
+                hitSlop={8}
+              >
                 <Text style={styles.footerLink}>Войти</Text>
               </Pressable>
             </View>
+            <View style={styles.coachRegistration}>
+                <Pressable
+                  onPress={() => router.push('/register-coach')}
+                  hitSlop={8}
+                >
+                  <Text style={styles.coachRegistrationLink}>
+                    Зарегистрироваться как тренер
+                  </Text>
+                </Pressable>
+              </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -550,130 +575,207 @@ export default function RegisterScreen() {
   );
 }
 
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#FFFFFF',
   },
+
   keyboardContainer: {
     flex: 1,
   },
+
   scrollView: {
     flex: 1,
   },
+
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 40,
+    paddingBottom: 100,
   },
+
   container: {
     flex: 1,
     paddingHorizontal: 24,
-    paddingTop: 20,
+    paddingTop: 12,
   },
+
   backButton: {
     alignSelf: 'flex-start',
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingRight: 16,
     marginBottom: 24,
   },
+
   backButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: '#333333',
+    fontSize: 15,
     fontWeight: '600',
   },
+
+  header: {
+    marginBottom: 26,
+  },
+
+  eyebrow: {
+    color: '#777777',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 3,
+    marginBottom: 12,
+  },
+
   title: {
-    color: '#FFFFFF',
-    fontSize: 28,
+    color: '#111111',
+    fontSize: 29,
+    fontWeight: '800',
+    letterSpacing: -0.8,
+    marginBottom: 9,
+  },
+
+  subtitle: {
+    color: '#777777',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+
+  formCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#EAEAEA',
+  },
+
+  inputGroup: {
+    marginBottom: 19,
+  },
+
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+
+  label: {
+    color: '#222222',
+    fontSize: 13,
     fontWeight: '700',
     marginBottom: 8,
   },
-  subtitle: {
-    color: '#A0A0A0',
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 28,
-  },
-  formCard: {
-    backgroundColor: '#171717',
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#303030',
-  },
-  inputGroup: {
-    marginBottom: 18,
-  },
-  label: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
+
+  optionalLabel: {
+    color: '#999999',
+    fontSize: 11,
     marginBottom: 8,
   },
+
   input: {
-    height: 52,
-    backgroundColor: '#242424',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    color: '#FFFFFF',
+    height: 54,
+    backgroundColor: '#F7F7F7',
+    borderRadius: 11,
+    paddingHorizontal: 15,
+    color: '#111111',
     fontSize: 15,
     borderWidth: 1,
-    borderColor: '#414141',
+    borderColor: '#E7E7E7',
   },
+
   passwordContainer: {
-    minHeight: 52,
+    minHeight: 54,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#242424',
-    borderRadius: 10,
+    backgroundColor: '#F7F7F7',
+    borderRadius: 11,
     borderWidth: 1,
-    borderColor: '#414141',
+    borderColor: '#E7E7E7',
   },
+
   passwordInput: {
     flex: 1,
-    height: 52,
-    paddingHorizontal: 14,
-    color: '#FFFFFF',
+    height: 54,
+    paddingHorizontal: 15,
+    color: '#111111',
     fontSize: 15,
   },
+
   passwordToggle: {
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 14,
   },
+
   passwordToggleText: {
-    color: '#FFFFFF',
+    color: '#222222',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
+
   errorContainer: {
-    backgroundColor: '#292929',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF4F4',
     borderWidth: 1,
-    borderColor: '#777777',
-    borderRadius: 10,
-    padding: 12,
+    borderColor: '#F0D0D0',
+    borderRadius: 11,
+    padding: 13,
     marginBottom: 16,
+    gap: 10,
   },
-  errorText: {
+
+  errorIcon: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#D93030',
     color: '#FFFFFF',
+    textAlign: 'center',
+    lineHeight: 20,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  errorText: {
+    flex: 1,
+    color: '#A52222',
     fontSize: 13,
     lineHeight: 19,
   },
+
   primaryButton: {
-    height: 54,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 10,
+    height: 56,
+    backgroundColor: '#111111',
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
+    marginTop: 5,
   },
+
   primaryButtonText: {
-    color: '#000000',
-    fontSize: 16,
+    color: '#FFFFFF',
+    fontSize: 15,
     fontWeight: '700',
+    letterSpacing: 0.2,
   },
+
   disabledButton: {
-    opacity: 0.5,
+    opacity: 0.55,
   },
+
+  buttonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.99 }],
+  },
+
+  formHint: {
+    color: '#999999',
+    fontSize: 11,
+    lineHeight: 17,
+    textAlign: 'center',
+    marginTop: 16,
+  },
+
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -681,49 +783,75 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 24,
   },
+
   footerText: {
-    color: '#A0A0A0',
+    color: '#777777',
     fontSize: 14,
   },
+
   footerLink: {
-    color: '#FFFFFF',
+    color: '#111111',
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '800',
   },
+
   successContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 28,
-    backgroundColor: '#000000',
-  },
-  successIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
     backgroundColor: '#FFFFFF',
+  },
+
+  successIcon: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: '#111111',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 24,
+    marginBottom: 25,
   },
+
   successIconText: {
-    color: '#000000',
+    color: '#FFFFFF',
     fontSize: 40,
     fontWeight: '700',
   },
+
   successTitle: {
-    color: '#FFFFFF',
+    color: '#111111',
     fontSize: 24,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
     marginBottom: 12,
   },
+
   successText: {
-    color: '#A0A0A0',
+    color: '#777777',
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 23,
     textAlign: 'center',
-    marginBottom: 28,
+    marginBottom: 30,
+  },
+  coachRegistration: {
+    alignItems: 'center',
+    marginTop: 24,
+    marginBottom: 30,
+  },
+
+  coachRegistrationText: {
+    color: '#777777',
+    fontSize: 13,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+
+  coachRegistrationLink: {
+    color: '#111111',
+    fontSize: 14,
+    fontWeight: '800',
+    textDecorationLine: 'underline',
+    textAlign: 'center',
   },
 });
-
