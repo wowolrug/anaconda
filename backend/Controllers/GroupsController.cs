@@ -43,16 +43,22 @@ public class GroupsController : ControllerBase
 
     // Профиль доступен тренеру, если:
     // 1. Он создан этим тренером.
-    // 2. Он связан с аккаунтом спортсмена (совместимость со старой системой).
+    // 2. Он связан с аккаунтом спортсмена.
     // 3. У него есть история членства в группах этого тренера.
+    //
+    // Собственный профиль тренера никогда не отображается
+    // в списках спортсменов.
     private IQueryable<AthleteProfile> GetVisibleAthleteProfiles(
         int coachId)
     {
         return _db.AthleteProfiles.Where(a =>
-            a.CreatedByUserId == coachId ||
-            a.UserId != null ||
-            a.GroupMemberships.Any(m =>
-                m.TrainingGroup.CoachId == coachId));
+            a.UserId != coachId &&
+            (
+                a.CreatedByUserId == coachId ||
+                a.UserId != null ||
+                a.GroupMemberships.Any(m =>
+                    m.TrainingGroup.CoachId == coachId)
+            ));
     }
 
     // ==============================
@@ -86,7 +92,8 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.AthleteProfile.IsArchived)
+                         !m.AthleteProfile.IsArchived &&
+                         m.AthleteProfile.UserId != g.CoachId)
             })
             .ToListAsync();
 
@@ -116,7 +123,8 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.AthleteProfile.IsArchived)
+                         !m.AthleteProfile.IsArchived &&
+                         m.AthleteProfile.UserId != g.CoachId)
             })
             .ToListAsync();
 
@@ -151,7 +159,8 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.AthleteProfile.IsArchived)
+                         !m.AthleteProfile.IsArchived &&
+                         m.AthleteProfile.UserId != g.CoachId)
             })
             .FirstOrDefaultAsync();
 
@@ -578,7 +587,8 @@ public class GroupsController : ControllerBase
             .Where(m =>
                 m.TrainingGroupId == id &&
                 m.LeftDate == null &&
-                !m.AthleteProfile.IsArchived)
+                !m.AthleteProfile.IsArchived &&
+                m.AthleteProfile.UserId != coachId.Value)
             .Select(m => m.AthleteProfileId)
             .ToListAsync();
 
@@ -629,7 +639,8 @@ public class GroupsController : ControllerBase
             .Where(m =>
                 m.TrainingGroupId == id &&
                 m.LeftDate == null &&
-                !m.AthleteProfile.IsArchived)
+                !m.AthleteProfile.IsArchived &&
+                m.AthleteProfile.UserId != coachId.Value)
             .OrderBy(m => m.AthleteProfile.Surname)
             .ThenBy(m => m.AthleteProfile.Name)
             .Select(m => new
@@ -725,6 +736,16 @@ public class GroupsController : ControllerBase
             return NotFound(new
             {
                 message = "Active athlete profile not found."
+            });
+        }
+
+        // Тренер не может добавить собственный профиль
+        // в группу в качестве спортсмена.
+        if (athlete.UserId == coachId.Value)
+        {
+            return BadRequest(new
+            {
+                message = "A coach cannot add their own profile as an athlete."
             });
         }
 
