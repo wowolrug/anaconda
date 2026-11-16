@@ -339,7 +339,7 @@ public class AuthController : ControllerBase
             signingKey,
             SecurityAlgorithms.HmacSha256);
 
-        var expiresAt = DateTime.UtcNow.AddHours(2);
+        var expiresAt = DateTime.UtcNow.AddYears(2);
 
         var token = new JwtSecurityToken(
             issuer: issuer,
