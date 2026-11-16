@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,10 +16,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { login } from '@/api/auth';
 
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const passwordInputRef = useRef<TextInput>(null);
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -26,6 +30,7 @@ export default function LoginScreen() {
     }
 
     try {
+      Keyboard.dismiss();
       setLoading(true);
       await login(email.trim(), password);
       setPassword('');
@@ -54,73 +59,87 @@ export default function LoginScreen() {
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
-        <View style={styles.header}>
-          <Text style={styles.logo}>MMT</Text>
-          <Text style={styles.title}>С возвращением!</Text>
-          <Text style={styles.subtitle}>Войди в систему</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.content}>
+            <View style={styles.header}>
+              <Text style={styles.logo}>Anaconda</Text>
+              <Text style={styles.title}>С возвращением!</Text>
+              <Text style={styles.subtitle}>Войди в систему</Text>
+            </View>
 
-        <View style={styles.form}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            value={email}
-            onChangeText={setEmail}
-            placeholder="athlete@example.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!loading}
-            style={styles.input}
-            returnKeyType="next"
-          />
+            <View style={styles.form}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                placeholder="athlete@example.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!loading}
+                style={styles.input}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => passwordInputRef.current?.focus()}
+              />
 
-          <Text style={styles.label}>Пароль</Text>
-          <TextInput
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Введи пароль"
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!loading}
-            style={styles.input}
-            returnKeyType="done"
-            onSubmitEditing={handleLogin}
-          />
+              <Text style={styles.label}>Пароль</Text>
+              <TextInput
+                ref={passwordInputRef}
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Введи пароль"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!loading}
+                style={styles.input}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
 
-          <Pressable
-            onPress={handleLogin}
-            disabled={loading}
-            style={({ pressed }) => [
-              styles.button,
-              pressed && styles.buttonPressed,
-              loading && styles.buttonDisabled,
-            ]}
-          >
-            {loading ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.buttonText}>Войти</Text>
-            )}
-          </Pressable>
+              <Pressable
+                onPress={handleLogin}
+                disabled={loading}
+                style={({ pressed }) => [
+                  styles.button,
+                  pressed && styles.buttonPressed,
+                  loading && styles.buttonDisabled,
+                ]}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>Войти</Text>
+                )}
+              </Pressable>
 
-          <View style={styles.registerRow}>
-            <Text style={styles.registerHint}>Нет аккаунта?</Text>
-            <Pressable
-              onPress={() => router.push('/register')}
-              disabled={loading}
-              accessibilityRole="link"
-              accessibilityLabel="Зарегистрироваться"
-              hitSlop={8}
-            >
-              <Text style={styles.registerLink}>Зарегистрироваться</Text>
-            </Pressable>
+              <View style={styles.registerRow}>
+                <Text style={styles.registerHint}>Нет аккаунта?</Text>
+                <Pressable
+                  onPress={() => router.push('/register')}
+                  disabled={loading}
+                  accessibilityRole="link"
+                  accessibilityLabel="Зарегистрироваться"
+                  hitSlop={8}
+                >
+                  <Text style={styles.registerLink}>Зарегистрироваться</Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <Text style={styles.footer}>MMA Training Tracker</Text>
           </View>
-        </View>
-
-        <Text style={styles.footer}>MMA Training Tracker</Text>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -133,8 +152,14 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
+  },
+  content: {
     paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   header: {
     marginBottom: 36,

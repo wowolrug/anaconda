@@ -310,9 +310,9 @@ export default function HomeScreen() {
         if (user?.userId != null) {
           // Физические показатели.
           try {
-            const measurementsResponse = await api.get<
-              PhysicalMeasurement[]
-            >(`/PhysicalMeasurements/athlete/${user.userId}`);
+            const measurementsResponse = await api.get<PhysicalMeasurement[]>(
+  '/PhysicalMeasurements/my',
+);
 
             const sortedMeasurements = [...measurementsResponse.data].sort(
               (a, b) =>

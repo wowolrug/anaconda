@@ -1,3 +1,4 @@
+
 using System.Security.Claims;
 using backend.Data;
 using backend.DTOs;
@@ -27,21 +28,28 @@ public class PhysicalMeasurementsController : ControllerBase
             out userId);
     }
 
-    private IQueryable<int> GetCoachAthleteIds(int coachId)
+    private IQueryable<int> GetCoachAthleteProfileIds(int coachId)
     {
         return _db.GroupMemberships
             .Where(m =>
                 m.LeftDate == null &&
                 m.TrainingGroup.CoachId == coachId)
-            .Select(m => m.AthleteId)
+            .Select(m => m.AthleteProfileId)
             .Distinct();
     }
 
-    private IQueryable<int> GetParentChildIds(int parentId)
+    private IQueryable<int> GetParentChildProfileIds(int parentId)
     {
         return _db.ParentAthletes
             .Where(pa => pa.ParentId == parentId)
-            .Select(pa => pa.AthleteId);
+            .Select(pa => pa.AthleteProfileId);
+    }
+
+    private IQueryable<int> GetCurrentAthleteProfileIds(int userId)
+    {
+        return _db.AthleteProfiles
+            .Where(a => a.UserId == userId)
+            .Select(a => a.AthleteProfileId);
     }
 
     private IQueryable<PhysicalMeasurement> ApplyAccessFilter(
@@ -50,25 +58,59 @@ public class PhysicalMeasurementsController : ControllerBase
     {
         if (User.IsInRole("Coach"))
         {
-            var athleteIds = GetCoachAthleteIds(userId);
-            return query.Where(m => athleteIds.Contains(m.AthleteId));
+            var profileIds = GetCoachAthleteProfileIds(userId);
+
+            return query.Where(m =>
+                profileIds.Contains(m.AthleteProfileId));
         }
 
         if (User.IsInRole("Athlete"))
         {
-            return query.Where(m => m.AthleteId == userId);
+            var profileIds = GetCurrentAthleteProfileIds(userId);
+
+            return query.Where(m =>
+                profileIds.Contains(m.AthleteProfileId));
         }
 
         if (User.IsInRole("Parent"))
         {
-            var childIds = GetParentChildIds(userId);
-            return query.Where(m => childIds.Contains(m.AthleteId));
+            var profileIds = GetParentChildProfileIds(userId);
+
+            return query.Where(m =>
+                profileIds.Contains(m.AthleteProfileId));
         }
 
         return query.Where(m => false);
     }
 
-    // Получение всех измерений спортсмена.
+    // Получение измерений текущего спортсмена по его аккаунту.
+    [HttpGet("my")]
+    [Authorize(Roles = "Athlete")]
+    public async Task<IActionResult> GetMyMeasurements(
+        [FromQuery] MeasurementType? type)
+    {
+        if (!TryGetCurrentUserId(out var userId))
+            return Unauthorized();
+
+        var athleteProfileId = await _db.AthleteProfiles
+            .Where(a => a.UserId == userId)
+            .Select(a => (int?)a.AthleteProfileId)
+            .FirstOrDefaultAsync();
+
+        if (!athleteProfileId.HasValue)
+        {
+            return NotFound(new
+            {
+                message = "Athlete profile not found."
+            });
+        }
+
+        return await GetAthleteMeasurements(
+            athleteProfileId.Value,
+            type);
+    }
+
+    // Получение всех измерений конкретного спортсмена.
     [HttpGet("athlete/{athleteId:int}")]
     public async Task<IActionResult> GetAthleteMeasurements(
         int athleteId,
@@ -77,9 +119,24 @@ public class PhysicalMeasurementsController : ControllerBase
         if (!TryGetCurrentUserId(out var userId))
             return Unauthorized();
 
-        if (!await _db.Users.AnyAsync(u => u.Id == athleteId))
+        var athleteExists = await _db.AthleteProfiles
+            .AnyAsync(a => a.AthleteProfileId == athleteId);
+
+        if (!athleteExists)
         {
-            return NotFound(new { message = "Athlete not found." });
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
+        }
+
+        if (type.HasValue &&
+            !Enum.IsDefined(typeof(MeasurementType), type.Value))
+        {
+            return BadRequest(new
+            {
+                message = "Invalid measurement type."
+            });
         }
 
         var query = ApplyAccessFilter(
@@ -88,32 +145,23 @@ public class PhysicalMeasurementsController : ControllerBase
                 .Include(m => m.GroupMetric),
             userId);
 
-        query = query.Where(m => m.AthleteId == athleteId);
+        query = query.Where(m =>
+            m.AthleteProfileId == athleteId);
 
         if (type.HasValue)
-        {
-            if (!Enum.IsDefined(typeof(MeasurementType), type.Value))
-            {
-                return BadRequest(new
-                {
-                    message = "Invalid measurement type."
-                });
-            }
-
             query = query.Where(m => m.Type == type.Value);
-        }
 
         var measurements = await query
             .OrderByDescending(m => m.MeasuredAt)
             .Select(m => new
             {
                 m.PhysicalMeasurementId,
-                m.AthleteId,
 
-                // Для старых измерений.
+                AthleteId = m.AthleteProfileId,
+                m.AthleteProfileId,
+
                 m.Type,
 
-                // Для пользовательских метрик.
                 m.GroupMetricId,
                 GroupMetricName = m.GroupMetric != null
                     ? m.GroupMetric.Name
@@ -135,11 +183,13 @@ public class PhysicalMeasurementsController : ControllerBase
             })
             .ToListAsync();
 
-        if (!User.IsInRole("Coach") &&
-            measurements.Count == 0 &&
+        if (measurements.Count == 0 &&
             !await CanAccessAthleteAsync(userId, athleteId))
         {
-            return NotFound(new { message = "Athlete not found." });
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
         }
 
         return Ok(measurements);
@@ -171,16 +221,20 @@ public class PhysicalMeasurementsController : ControllerBase
             });
         }
 
-        var athleteExists = await _db.Users
-            .AnyAsync(u => u.Id == athleteId);
+        var athleteExists = await _db.AthleteProfiles
+            .AnyAsync(a => a.AthleteProfileId == athleteId);
 
         if (!athleteExists)
         {
-            return NotFound(new { message = "Athlete not found." });
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
         }
 
-        var coachCanAccessAthlete = await GetCoachAthleteIds(coachId)
-            .AnyAsync(id => id == athleteId);
+        var coachCanAccessAthlete =
+            await GetCoachAthleteProfileIds(coachId)
+                .AnyAsync(id => id == athleteId);
 
         if (!coachCanAccessAthlete)
         {
@@ -198,7 +252,7 @@ public class PhysicalMeasurementsController : ControllerBase
 
         var measurement = new PhysicalMeasurement
         {
-            AthleteId = athleteId,
+            AthleteProfileId = athleteId,
             RecordedByUserId = coachId,
             Type = dto.Type,
             GroupMetricId = null,
@@ -216,7 +270,8 @@ public class PhysicalMeasurementsController : ControllerBase
             new
             {
                 measurement.PhysicalMeasurementId,
-                measurement.AthleteId,
+                AthleteId = measurement.AthleteProfileId,
+                measurement.AthleteProfileId,
                 measurement.Type,
                 measurement.Value,
                 measurement.MeasuredAt,
@@ -243,14 +298,13 @@ public class PhysicalMeasurementsController : ControllerBase
             });
         }
 
-        // Находим активную метрику только в группе текущего тренера.
         var metric = await _db.GroupMetrics
             .FirstOrDefaultAsync(m =>
                 m.GroupMetricId == metricId &&
                 m.IsActive &&
                 m.TrainingGroup.CoachId == coachId);
 
-        if (metric == null)
+        if (metric is null)
         {
             return NotFound(new
             {
@@ -258,10 +312,9 @@ public class PhysicalMeasurementsController : ControllerBase
             });
         }
 
-        // Проверяем, что спортсмен сейчас состоит именно в этой группе.
         var athleteIsInGroup = await _db.GroupMemberships
             .AnyAsync(m =>
-                m.AthleteId == athleteId &&
+                m.AthleteProfileId == athleteId &&
                 m.TrainingGroupId == metric.TrainingGroupId &&
                 m.LeftDate == null);
 
@@ -281,7 +334,7 @@ public class PhysicalMeasurementsController : ControllerBase
 
         var measurement = new PhysicalMeasurement
         {
-            AthleteId = athleteId,
+            AthleteProfileId = athleteId,
             RecordedByUserId = coachId,
             Type = null,
             GroupMetricId = metric.GroupMetricId,
@@ -296,7 +349,8 @@ public class PhysicalMeasurementsController : ControllerBase
         return Ok(new
         {
             measurement.PhysicalMeasurementId,
-            measurement.AthleteId,
+            AthleteId = measurement.AthleteProfileId,
+            measurement.AthleteProfileId,
             measurement.GroupMetricId,
             GroupMetricName = metric.Name,
             GroupMetricUnit = metric.Unit,
@@ -310,22 +364,26 @@ public class PhysicalMeasurementsController : ControllerBase
 
     private async Task<bool> CanAccessAthleteAsync(
         int userId,
-        int athleteId)
+        int athleteProfileId)
     {
         if (User.IsInRole("Athlete"))
-            return userId == athleteId;
+        {
+            return await _db.AthleteProfiles.AnyAsync(a =>
+                a.AthleteProfileId == athleteProfileId &&
+                a.UserId == userId);
+        }
 
         if (User.IsInRole("Parent"))
         {
             return await _db.ParentAthletes.AnyAsync(pa =>
                 pa.ParentId == userId &&
-                pa.AthleteId == athleteId);
+                pa.AthleteProfileId == athleteProfileId);
         }
 
         if (User.IsInRole("Coach"))
         {
-            return await GetCoachAthleteIds(userId)
-                .AnyAsync(id => id == athleteId);
+            return await GetCoachAthleteProfileIds(userId)
+                .AnyAsync(id => id == athleteProfileId);
         }
 
         return false;

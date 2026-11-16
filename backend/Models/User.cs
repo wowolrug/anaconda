@@ -1,3 +1,4 @@
+
 using Microsoft.AspNetCore.Identity;
 
 namespace backend.Models;
@@ -7,34 +8,27 @@ public class User : IdentityUser<int>
     public string Name { get; set; } = string.Empty;
     public string Surname { get; set; } = string.Empty;
 
+    // Архивирование учётной записи
     public bool IsArchived { get; set; } = false;
 
+    // Необязательная привязка аккаунта к профилю спортсмена
     public AthleteProfile? AthleteProfile { get; set; }
 
+    // Родительские связи: этот пользователь является родителем
     public ICollection<ParentAthlete> Children { get; set; }
         = new List<ParentAthlete>();
 
-    public ICollection<ParentAthlete> Parents { get; set; }
-        = new List<ParentAthlete>();
-
-    public ICollection<GroupMembership> GroupMemberships { get; set; }
-        = new List<GroupMembership>();
-
+    // Группы, которые ведёт тренер
     public ICollection<Training> CoachedTrainings { get; set; }
         = new List<Training>();
 
-    public ICollection<TrainingParticipant> TrainingParticipations { get; set; }
-        = new List<TrainingParticipant>();
-
-    public ICollection<PhysicalMeasurement> Measurements { get; set; }
-        = new List<PhysicalMeasurement>();
-
+    // Замеры, которые записал этот пользователь
     public ICollection<PhysicalMeasurement> RecordedMeasurements { get; set; }
         = new List<PhysicalMeasurement>();
 
-    public ICollection<AthleteNote> AthleteNotes { get; set; }
-        = new List<AthleteNote>();
-
+    // Заметки, которые написал этот пользователь
     public ICollection<AthleteNote> WrittenNotes { get; set; }
         = new List<AthleteNote>();
+    public ICollection<AthleteProfile> CreatedAthleteProfiles { get; set; }
+        = new List<AthleteProfile>();
 }

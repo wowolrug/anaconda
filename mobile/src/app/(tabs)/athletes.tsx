@@ -89,6 +89,13 @@ export default function AthletesScreen() {
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupDescription, setNewGroupDescription] = useState('');
 
+  const [showCreateAthleteModal, setShowCreateAthleteModal] = useState(false);
+  const [creatingAthlete, setCreatingAthlete] = useState(false);
+  const [newAthleteName, setNewAthleteName] = useState('');
+  const [newAthleteSurname, setNewAthleteSurname] = useState('');
+  const [newAthleteGender, setNewAthleteGender] = useState(0);
+  const [newAthleteBeltColor, setNewAthleteBeltColor] = useState('');
+
   function openAthlete(athlete: Athlete) {
     router.push({
       pathname: '/athlete-details',
@@ -268,6 +275,56 @@ export default function AthletesScreen() {
       );
     } finally {
       setCreatingGroup(false);
+    }
+  }
+
+  async function createAthlete() {
+    const name = newAthleteName.trim();
+    const surname = newAthleteSurname.trim();
+
+    if (!name || !surname) {
+      Alert.alert('Заполни данные', 'Укажи имя и фамилию спортсмена.');
+      return;
+    }
+
+    if (creatingAthlete) return;
+
+    setCreatingAthlete(true);
+
+    try {
+      await api.post('/Groups/athletes', {
+        name,
+        surname,
+        gender: newAthleteGender,
+        beltColor: newAthleteBeltColor.trim() || null,
+        weightCategory: 0,
+      });
+
+      await loadAllAthletes();
+      setAthletesError(null);
+
+      setNewAthleteName('');
+      setNewAthleteSurname('');
+      setNewAthleteGender(0);
+      setNewAthleteBeltColor('');
+      setShowCreateAthleteModal(false);
+
+      Alert.alert(
+        'Спортсмен создан',
+        `${name} ${surname} добавлен в список. Аккаунт для него не создавался.`,
+      );
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const message =
+        status === 401
+          ? 'Сессия истекла. Войди в аккаунт заново.'
+          : status === 403
+            ? 'Создавать профили спортсменов может только тренер.'
+            : err?.response?.data?.message ?? 'Не удалось создать профиль спортсмена.';
+
+      Alert.alert('Ошибка', message);
+    } finally {
+      setCreatingAthlete(false);
     }
   }
 
@@ -591,6 +648,13 @@ export default function AthletesScreen() {
           <Text style={styles.createGroupButtonText}>+ Создать группу</Text>
         </Pressable>
 
+        <Pressable
+          style={styles.createAthleteButton}
+          onPress={() => setShowCreateAthleteModal(true)}
+        >
+          <Text style={styles.createAthleteButtonText}>+ Создать профиль спортсмена</Text>
+        </Pressable>
+
         {refreshError && <Text style={styles.error}>{refreshError}</Text>}
 
         {loading && (
@@ -765,7 +829,7 @@ export default function AthletesScreen() {
                 <View style={styles.emptyCard}>
                   <Text style={styles.emptyTitle}>Спортсменов пока нет</Text>
                   <Text style={styles.emptyText}>
-                    Зарегистрированные спортсмены появятся здесь.
+                    Здесь отображаются спортсмены с аккаунтами и профили, созданные тренером.
                   </Text>
                 </View>
               ) : (
@@ -967,6 +1031,132 @@ export default function AthletesScreen() {
       </Modal>
 
       <Modal
+        visible={showCreateAthleteModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (!creatingAthlete) setShowCreateAthleteModal(false);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.createModalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleContainer}>
+                <Text style={styles.modalTitle}>Новый спортсмен</Text>
+                <Text style={styles.modalSubtitle}>
+                  Профиль будет создан без аккаунта
+                </Text>
+              </View>
+              <Pressable
+                style={styles.modalCloseButton}
+                onPress={() => setShowCreateAthleteModal(false)}
+                disabled={creatingAthlete}
+              >
+                <Text style={styles.modalCloseText}>×</Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.inputLabel}>Имя</Text>
+            <TextInput
+              style={styles.groupInput}
+              placeholder="Имя спортсмена"
+              placeholderTextColor="#9CA3AF"
+              value={newAthleteName}
+              onChangeText={setNewAthleteName}
+              maxLength={100}
+              autoCapitalize="words"
+              editable={!creatingAthlete}
+            />
+
+            <Text style={styles.inputLabel}>Фамилия</Text>
+            <TextInput
+              style={styles.groupInput}
+              placeholder="Фамилия спортсмена"
+              placeholderTextColor="#9CA3AF"
+              value={newAthleteSurname}
+              onChangeText={setNewAthleteSurname}
+              maxLength={100}
+              autoCapitalize="words"
+              editable={!creatingAthlete}
+            />
+
+            <Text style={styles.inputLabel}>Пол</Text>
+            <View style={styles.genderOptions}>
+              <Pressable
+                style={[
+                  styles.genderOption,
+                  newAthleteGender === 0 && styles.genderOptionSelected,
+                ]}
+                onPress={() => setNewAthleteGender(0)}
+                disabled={creatingAthlete}
+              >
+                <Text
+                  style={[
+                    styles.genderOptionText,
+                    newAthleteGender === 0 && styles.genderOptionTextSelected,
+                  ]}
+                >
+                  Мужской
+                </Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.genderOption,
+                  newAthleteGender === 1 && styles.genderOptionSelected,
+                ]}
+                onPress={() => setNewAthleteGender(1)}
+                disabled={creatingAthlete}
+              >
+                <Text
+                  style={[
+                    styles.genderOptionText,
+                    newAthleteGender === 1 && styles.genderOptionTextSelected,
+                  ]}
+                >
+                  Женский
+                </Text>
+              </Pressable>
+            </View>
+
+            <Text style={styles.inputLabel}>Цвет пояса</Text>
+            <TextInput
+              style={styles.groupInput}
+              placeholder="Например, белый"
+              placeholderTextColor="#9CA3AF"
+              value={newAthleteBeltColor}
+              onChangeText={setNewAthleteBeltColor}
+              maxLength={100}
+              editable={!creatingAthlete}
+            />
+
+            <Text style={styles.formHint}>
+              Весовая категория пока останется «Не указана». Её можно будет заполнить отдельно.
+            </Text>
+
+            <Pressable
+              style={[styles.createSubmitButton, creatingAthlete && styles.disabledButton]}
+              onPress={() => void createAthlete()}
+              disabled={creatingAthlete}
+            >
+              {creatingAthlete ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.createSubmitButtonText}>Создать спортсмена</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              style={styles.modalCancelButton}
+              onPress={() => setShowCreateAthleteModal(false)}
+              disabled={creatingAthlete}
+            >
+              <Text style={styles.modalCancelText}>Отмена</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
         visible={showCreateGroupModal}
         transparent
         animationType="slide"
@@ -1078,6 +1268,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center',
   },
   createGroupButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  createAthleteButton: {
+    marginTop: 10, backgroundColor: '#EEF2FF', borderRadius: 14,
+    paddingVertical: 13, alignItems: 'center',
+  },
+  createAthleteButtonText: { color: '#2563EB', fontSize: 14, fontWeight: '700' },
   section: { marginTop: 28 },
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -1196,6 +1391,16 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24, padding: 22, paddingBottom: 32,
   },
   inputLabel: { fontSize: 13, fontWeight: '600', color: '#374151', marginTop: 18, marginBottom: 7 },
+  genderOptions: { flexDirection: 'row', gap: 10 },
+  genderOption: {
+    flex: 1, minHeight: 44, borderRadius: 12, borderWidth: 1,
+    borderColor: '#E5E7EB', backgroundColor: '#FFFFFF',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  genderOptionSelected: { borderColor: '#2563EB', backgroundColor: '#EEF2FF' },
+  genderOptionText: { color: '#4B5563', fontSize: 14, fontWeight: '600' },
+  genderOptionTextSelected: { color: '#2563EB' },
+  formHint: { marginTop: 10, fontSize: 12, lineHeight: 18, color: '#6B7280' },
   groupInput: {
     backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#E5E7EB',
     borderRadius: 12, paddingHorizontal: 14, paddingVertical: 13,

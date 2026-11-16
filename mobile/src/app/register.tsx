@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -13,139 +13,272 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { api } from '@/api/client';
+import api from '@/api/client';
 
-type RegisterResponse = {
+type TextInputRef = React.ComponentRef<typeof TextInput>;
+type ScrollViewRef = React.ComponentRef<typeof ScrollView>;
+
+interface RegisterResponse {
   message?: string;
   userId?: number;
-};
-
-function getServerErrorMessage(error: any) {
-  const data = error?.response?.data;
-
-  if (typeof data?.message === 'string' && data.message.trim()) {
-    const knownMessages: Record<string, string> = {
-      'A user with this email already exists.':
-        'Аккаунт с такой электронной почтой уже существует.',
-      'Public registration is allowed only for Athlete and Parent.':
-        'Самостоятельная регистрация этой роли недоступна.',
-      'Could not assign the user role.':
-        'Не удалось назначить роль аккаунту. Попробуй позже.',
-    };
-
-    return knownMessages[data.message] ?? data.message;
-  }
-
-  if (Array.isArray(data?.errors) && data.errors.length > 0) {
-    return data.errors
-      .filter((item: unknown) => typeof item === 'string')
-      .map((item: string) => translateIdentityError(item))
-      .join('\n');
-  }
-
-  if (data?.errors && typeof data.errors === 'object') {
-    const messages = Object.values(data.errors).flat();
-    if (messages.length > 0) {
-      return messages
-        .filter((item): item is string => typeof item === 'string')
-        .map(translateIdentityError)
-        .join('\n');
-    }
-  }
-
-  if (!error?.response) {
-    return 'Не удалось связаться с сервером. Проверь подключение и попробуй снова.';
-  }
-
-  return 'Не удалось создать аккаунт. Проверь введённые данные и попробуй снова.';
+  athleteProfileId?: number;
+  profileLinked?: boolean;
+  profileLinkStatus?: string;
 }
 
-function translateIdentityError(message: string) {
-  const lower = message.toLowerCase();
+function translateIdentityError(message: string): string {
+  const normalized = message.toLowerCase();
 
-  if (lower.includes('email') && lower.includes('already')) {
-    return 'Аккаунт с такой электронной почтой уже существует.';
+  if (
+    normalized.includes('passwordrequiresdigit') ||
+    normalized.includes('digit')
+  ) {
+    return 'Пароль не должен содержать обязательные цифры.';
   }
-  if (lower.includes('password') && lower.includes('at least')) {
-    return 'Пароль слишком короткий.';
+
+  if (
+    normalized.includes('passwordrequiresuppercase') ||
+    normalized.includes('uppercase')
+  ) {
+    return 'Пароль не должен содержать обязательные заглавные буквы.';
   }
-  if (lower.includes('password') && lower.includes('digit')) {
-    return 'Пароль должен содержать хотя бы одну цифру.';
+
+  if (
+    normalized.includes('passwordrequireslowercase') ||
+    normalized.includes('lowercase')
+  ) {
+    return 'Пароль не должен содержать обязательные строчные буквы.';
   }
-  if (lower.includes('password') && lower.includes('uppercase')) {
-    return 'Пароль должен содержать хотя бы одну заглавную букву.';
+
+  if (
+    normalized.includes('passwordrequiresnonalphanumeric') ||
+    normalized.includes('nonalphanumeric')
+  ) {
+    return 'Пароль не должен содержать обязательные специальные символы.';
   }
-  if (lower.includes('password') && lower.includes('lowercase')) {
-    return 'Пароль должен содержать хотя бы одну строчную букву.';
+
+  if (
+    normalized.includes('passwordtooshort') ||
+    normalized.includes('password')
+  ) {
+    return 'Пароль должен содержать не менее 6 символов.';
   }
-  if (lower.includes('password') && lower.includes('non alphanumeric')) {
-    return 'Пароль должен содержать хотя бы один специальный символ.';
+
+  if (
+    normalized.includes('duplicateuser') ||
+    normalized.includes('already exists') ||
+    normalized.includes('already taken') ||
+    normalized.includes('уже существует')
+  ) {
+    return 'Пользователь с таким email уже зарегистрирован.';
+  }
+
+  if (
+    normalized.includes('invalid email') ||
+    normalized.includes('email')
+  ) {
+    return 'Проверьте правильность email.';
+  }
+
+  if (normalized.includes('phone')) {
+    return 'Проверьте правильность номера телефона.';
   }
 
   return message;
 }
 
+function getServerErrorMessage(error: any): string {
+  const data = error?.response?.data;
+
+  if (typeof data === 'string') {
+    return translateIdentityError(data);
+  }
+
+  if (data?.errors) {
+    const errors = Object.values(data.errors).flat();
+
+    if (errors.length > 0) {
+      return translateIdentityError(String(errors[0]));
+    }
+  }
+
+  if (data?.message) {
+    return translateIdentityError(data.message);
+  }
+
+  if (data?.title) {
+    return translateIdentityError(data.title);
+  }
+
+  if (error?.message === 'Network Error') {
+    return 'Не удалось подключиться к серверу. Проверьте подключение к интернету.';
+  }
+
+  return 'Не удалось зарегистрироваться. Попробуйте ещё раз.';
+}
+
+function validatePhoneNumber(phone: string): string | null {
+  const cleanPhone = phone.trim();
+
+  if (!cleanPhone) {
+    return null;
+  }
+
+  if (!/^\+?[0-9\s().-]+$/.test(cleanPhone)) {
+    return 'Номер телефона содержит недопустимые символы.';
+  }
+
+  const digits = cleanPhone.replace(/\D/g, '');
+
+  if (digits.length < 7 || digits.length > 15) {
+    return 'Номер телефона должен содержать от 7 до 15 цифр.';
+  }
+
+  return null;
+}
+
+function normalizePhoneNumber(phone: string): string | null {
+  const cleanPhone = phone.trim();
+
+  if (!cleanPhone) {
+    return null;
+  }
+
+  const hasPlus = cleanPhone.startsWith('+');
+  const digits = cleanPhone.replace(/\D/g, '');
+
+  return hasPlus ? `+${digits}` : digits;
+}
+
 export default function RegisterScreen() {
   const router = useRouter();
+
+  const scrollRef = useRef<ScrollViewRef>(null);
+
+  const nameRef = useRef<TextInputRef>(null);
+  const surnameRef = useRef<TextInputRef>(null);
+  const emailRef = useRef<TextInputRef>(null);
+  const phoneRef = useRef<TextInputRef>(null);
+  const passwordRef = useRef<TextInputRef>(null);
+  const confirmPasswordRef = useRef<TextInputRef>(null);
+
+  const formCardY = useRef(0);
+
+  const inputPositions = useRef<Record<string, number>>({});
 
   const [name, setName] = useState('');
   const [surname, setSurname] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [confirmPasswordVisible, setConfirmPasswordVisible] = useState(false);
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [registered, setRegistered] = useState(false);
 
-  async function submitRegistration() {
-    if (submitting) return;
+  const handleInputLayout = (key: string, y: number) => {
+    inputPositions.current[key] = y;
+  };
+
+  const handleInputFocus = (key: string) => {
+    const inputY = inputPositions.current[key];
+
+    if (inputY === undefined) {
+      return;
+    }
+
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({
+        y: Math.max(0, formCardY.current + inputY - 30),
+        animated: true,
+      });
+    }, Platform.OS === 'android' ? 300 : 150);
+  };
+
+  const submitRegistration = async () => {
+    if (submitting) {
+      return;
+    }
+
+    setErrorMessage('');
 
     const cleanName = name.trim();
     const cleanSurname = surname.trim();
     const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
 
     if (!cleanName || !cleanSurname) {
-      setError('Введи имя и фамилию.');
+      setErrorMessage('Заполните имя и фамилию.');
       return;
     }
 
-    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailPattern.test(cleanEmail)) {
-      setError('Введи корректный адрес электронной почты.');
+    if (cleanName.length > 100 || cleanSurname.length > 100) {
+      setErrorMessage('Имя и фамилия не должны превышать 100 символов.');
+      return;
+    }
+
+    if (!cleanEmail) {
+      setErrorMessage('Введите email.');
+      return;
+    }
+
+    if (cleanEmail.length > 254) {
+      setErrorMessage('Email слишком длинный.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!emailRegex.test(cleanEmail)) {
+      setErrorMessage('Введите корректный email.');
+      return;
+    }
+
+    const phoneError = validatePhoneNumber(cleanPhone);
+
+    if (phoneError) {
+      setErrorMessage(phoneError);
       return;
     }
 
     if (password.length < 6) {
-      setError('Пароль должен содержать не менее 6 символов.');
+      setErrorMessage('Пароль должен содержать не менее 6 символов.');
+      return;
+    }
+
+    if (password.length > 128) {
+      setErrorMessage('Пароль не должен превышать 128 символов.');
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('Пароли не совпадают.');
+      setErrorMessage('Пароли не совпадают.');
       return;
     }
 
     try {
       setSubmitting(true);
-      setError(null);
 
       await api.post<RegisterResponse>('/Auth/register', {
         name: cleanName,
         surname: cleanSurname,
         email: cleanEmail,
+        phoneNumber: normalizePhoneNumber(cleanPhone),
         password,
         role: 'Athlete',
       });
 
       setRegistered(true);
-    } catch (requestError: any) {
-      setError(getServerErrorMessage(requestError));
+    } catch (error: any) {
+      setErrorMessage(getServerErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
-  }
+  };
 
   if (registered) {
     return (
@@ -155,10 +288,10 @@ export default function RegisterScreen() {
             <Text style={styles.successIconText}>✓</Text>
           </View>
 
-          <Text style={styles.successTitle}>Аккаунт создан!</Text>
+          <Text style={styles.successTitle}>Регистрация завершена!</Text>
+
           <Text style={styles.successText}>
-            Регистрация прошла успешно. Теперь войди в приложение с помощью
-            своей электронной почты и пароля.
+            Аккаунт успешно создан. Теперь вы можете войти в приложение.
           </Text>
 
           <Pressable
@@ -173,179 +306,239 @@ export default function RegisterScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
       <KeyboardAvoidingView
-        style={styles.flex}
+        style={styles.keyboardContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.content}
+          ref={scrollRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>‹  Назад</Text>
-          </Pressable>
-
-          <View style={styles.brandMark}>
-            <Text style={styles.brandMarkText}>A</Text>
-          </View>
-
-          <Text style={styles.eyebrow}>ANACONDA</Text>
-          <Text style={styles.title}>Создать аккаунт</Text>
-          <Text style={styles.subtitle}>
-            Зарегистрируйся, чтобы следить за своим расписанием и спортивными
-            показателями.
-          </Text>
-
-          <View style={styles.formCard}>
-            <Text style={styles.label}>Имя</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Твоё имя"
-              placeholderTextColor="#9CA3AF"
-              autoCapitalize="words"
-              autoCorrect={false}
-              textContentType="givenName"
-              returnKeyType="next"
-              editable={!submitting}
-              maxLength={100}
-            />
-
-            <Text style={styles.label}>Фамилия</Text>
-            <TextInput
-              style={styles.input}
-              value={surname}
-              onChangeText={setSurname}
-              placeholder="Твоя фамилия"
-              placeholderTextColor="#9CA3AF"
-              autoCapitalize="words"
-              autoCorrect={false}
-              textContentType="familyName"
-              returnKeyType="next"
-              editable={!submitting}
-              maxLength={100}
-            />
-
-            <Text style={styles.label}>Электронная почта</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="name@example.com"
-              placeholderTextColor="#9CA3AF"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              autoComplete="email"
-              textContentType="emailAddress"
-              returnKeyType="next"
-              editable={!submitting}
-              maxLength={254}
-            />
-
-            <Text style={styles.label}>Пароль</Text>
-            <View style={styles.passwordRow}>
-              <TextInput
-                style={styles.passwordInput}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Не менее 6 символов"
-                placeholderTextColor="#9CA3AF"
-                secureTextEntry={!passwordVisible}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
-                returnKeyType="next"
-                editable={!submitting}
-              />
-              <Pressable
-                onPress={() => setPasswordVisible((value) => !value)}
-                accessibilityRole="button"
-                accessibilityLabel={passwordVisible ? 'Скрыть пароль' : 'Показать пароль'}
-                style={styles.passwordToggle}
-              >
-                <Text style={styles.passwordToggleText}>
-                  {passwordVisible ? 'Скрыть' : 'Показать'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <Text style={styles.label}>Повтори пароль</Text>
-            <View style={styles.passwordRow}>
-              <TextInput
-                style={styles.passwordInput}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                placeholder="Повтори пароль"
-                placeholderTextColor="#9CA3AF"
-                secureTextEntry={!confirmPasswordVisible}
-                autoCapitalize="none"
-                autoCorrect={false}
-                autoComplete="new-password"
-                textContentType="newPassword"
-                returnKeyType="done"
-                editable={!submitting}
-                onSubmitEditing={() => void submitRegistration()}
-              />
-              <Pressable
-                onPress={() => setConfirmPasswordVisible((value) => !value)}
-                accessibilityRole="button"
-                accessibilityLabel={confirmPasswordVisible ? 'Скрыть пароль' : 'Показать пароль'}
-                style={styles.passwordToggle}
-              >
-                <Text style={styles.passwordToggleText}>
-                  {confirmPasswordVisible ? 'Скрыть' : 'Показать'}
-                </Text>
-              </Pressable>
-            </View>
-
-            {error ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
-            ) : null}
-
+          <View style={styles.container}>
             <Pressable
-              style={[styles.primaryButton, submitting && styles.buttonDisabled]}
-              onPress={() => void submitRegistration()}
-              disabled={submitting}
+              style={styles.backButton}
+              onPress={() => router.back()}
             >
-              {submitting ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.primaryButtonText}>Зарегистрироваться</Text>
-              )}
+              <Text style={styles.backButtonText}>‹ Назад</Text>
             </Pressable>
 
-            <Text style={styles.footnote}>
-              Здесь создаётся аккаунт спортсмена. Для регистрации тренера
-              потребуется код приглашения.
+            <Text style={styles.title}>Создание аккаунта</Text>
+
+            <Text style={styles.subtitle}>
+              Заполните данные для регистрации спортсмена
             </Text>
-          </View>
 
-          <View style={styles.coachRow}>
-            <Text style={styles.coachText}>Ты тренер?</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push('/register-coach')}
+            <View
+              style={styles.formCard}
+              onLayout={(event) => {
+                formCardY.current = event.nativeEvent.layout.y;
+              }}
             >
-              <Text style={styles.coachLink}>Зарегистрироваться по коду</Text>
-            </Pressable>
-          </View>
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout('name', event.nativeEvent.layout.y)
+                }
+              >
+                <Text style={styles.label}>Имя</Text>
+                <TextInput
+                  ref={nameRef}
+                  style={styles.input}
+                  placeholder="Введите имя"
+                  placeholderTextColor="#888"
+                  value={name}
+                  onChangeText={setName}
+                  onFocus={() => handleInputFocus('name')}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => surnameRef.current?.focus()}
+                  maxLength={100}
+                />
+              </View>
 
-          <View style={styles.loginRow}>
-            <Text style={styles.loginText}>Уже есть аккаунт?</Text>
-            <Pressable onPress={() => router.replace('/login')}>
-              <Text style={styles.loginLink}>Войти</Text>
-            </Pressable>
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout('surname', event.nativeEvent.layout.y)
+                }
+              >
+                <Text style={styles.label}>Фамилия</Text>
+                <TextInput
+                  ref={surnameRef}
+                  style={styles.input}
+                  placeholder="Введите фамилию"
+                  placeholderTextColor="#888"
+                  value={surname}
+                  onChangeText={setSurname}
+                  onFocus={() => handleInputFocus('surname')}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => emailRef.current?.focus()}
+                  maxLength={100}
+                />
+              </View>
+
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout('email', event.nativeEvent.layout.y)
+                }
+              >
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  ref={emailRef}
+                  style={styles.input}
+                  placeholder="example@mail.com"
+                  placeholderTextColor="#888"
+                  value={email}
+                  onChangeText={setEmail}
+                  onFocus={() => handleInputFocus('email')}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => phoneRef.current?.focus()}
+                  maxLength={254}
+                />
+              </View>
+
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout('phone', event.nativeEvent.layout.y)
+                }
+              >
+                <Text style={styles.label}>Телефон (необязательно)</Text>
+                <TextInput
+                  ref={phoneRef}
+                  style={styles.input}
+                  placeholder="+7 999 123-45-67"
+                  placeholderTextColor="#888"
+                  value={phone}
+                  onChangeText={setPhone}
+                  onFocus={() => handleInputFocus('phone')}
+                  keyboardType="phone-pad"
+                  autoCapitalize="none"
+                  returnKeyType="next"
+                  onSubmitEditing={() => passwordRef.current?.focus()}
+                />
+              </View>
+
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout('password', event.nativeEvent.layout.y)
+                }
+              >
+                <Text style={styles.label}>Пароль</Text>
+
+                <View style={styles.passwordContainer}>
+                  <TextInput
+                    ref={passwordRef}
+                    style={styles.passwordInput}
+                    placeholder="Минимум 6 символов"
+                    placeholderTextColor="#888"
+                    value={password}
+                    onChangeText={setPassword}
+                    onFocus={() => handleInputFocus('password')}
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="next"
+                    onSubmitEditing={() => confirmPasswordRef.current?.focus()}
+                    maxLength={128}
+                  />
+
+                  <Pressable
+                    style={styles.passwordToggle}
+                    onPress={() => setShowPassword(!showPassword)}
+                  >
+                    <Text style={styles.passwordToggleText}>
+                      {showPassword ? 'Скрыть' : 'Показать'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              <View
+                style={styles.inputGroup}
+                onLayout={(event) =>
+                  handleInputLayout(
+                    'confirmPassword',
+                    event.nativeEvent.layout.y,
+                  )
+                }
+              >
+                <Text style={styles.label}>Повторите пароль</Text>
+
+                <View style={styles.passwordContainer}>
+                  <TextInput
+                    ref={confirmPasswordRef}
+                    style={styles.passwordInput}
+                    placeholder="Повторите пароль"
+                    placeholderTextColor="#888"
+                    value={confirmPassword}
+                    onChangeText={setConfirmPassword}
+                    onFocus={() => handleInputFocus('confirmPassword')}
+                    secureTextEntry={!showConfirmPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="done"
+                    onSubmitEditing={submitRegistration}
+                    maxLength={128}
+                  />
+
+                  <Pressable
+                    style={styles.passwordToggle}
+                    onPress={() =>
+                      setShowConfirmPassword(!showConfirmPassword)
+                    }
+                  >
+                    <Text style={styles.passwordToggleText}>
+                      {showConfirmPassword ? 'Скрыть' : 'Показать'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+
+              {!!errorMessage && (
+                <View style={styles.errorContainer}>
+                  <Text style={styles.errorText}>{errorMessage}</Text>
+                </View>
+              )}
+
+              <Pressable
+                style={[
+                  styles.primaryButton,
+                  submitting && styles.disabledButton,
+                ]}
+                onPress={submitRegistration}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>
+                    Зарегистрироваться
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Уже есть аккаунт?</Text>
+
+              <Pressable onPress={() => router.replace('/login')}>
+                <Text style={styles.footerLink}>Войти</Text>
+              </Pressable>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -354,145 +547,172 @@ export default function RegisterScreen() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  safeArea: { flex: 1, backgroundColor: '#F5F6F8' },
-  content: { paddingHorizontal: 22, paddingTop: 8, paddingBottom: 36 },
-  backButton: { alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12 },
-  backButtonText: { color: '#4B5563', fontSize: 14, fontWeight: '600' },
-  brandMark: {
-    width: 52,
-    height: 52,
-    borderRadius: 17,
-    backgroundColor: '#111827',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#101114',
   },
-  brandMarkText: { color: '#FFFFFF', fontSize: 26, fontWeight: '800' },
-  eyebrow: {
-    marginTop: 18,
-    color: '#2563EB',
-    letterSpacing: 2,
-    fontSize: 11,
-    fontWeight: '800',
+  keyboardContainer: {
+    flex: 1,
   },
-  title: { marginTop: 8, color: '#111827', fontSize: 30, fontWeight: '800' },
-  subtitle: { marginTop: 8, color: '#6B7280', fontSize: 14, lineHeight: 21 },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 40,
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 20,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingRight: 16,
+    marginBottom: 24,
+  },
+  backButtonText: {
+    color: '#E0A526',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  title: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  subtitle: {
+    color: '#A0A0A0',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 28,
+  },
   formCard: {
-    marginTop: 24,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    padding: 18,
+    backgroundColor: '#1B1D22',
+    borderRadius: 16,
+    padding: 20,
+  },
+  inputGroup: {
+    marginBottom: 18,
   },
   label: {
-    marginTop: 15,
-    marginBottom: 7,
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '700',
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
   },
   input: {
-    minHeight: 50,
+    height: 52,
+    backgroundColor: '#292C33',
+    borderRadius: 10,
     paddingHorizontal: 14,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
-    color: '#111827',
+    color: '#FFFFFF',
     fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#393C44',
   },
-  passwordRow: {
-    minHeight: 50,
+  passwordContainer: {
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#292C33',
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
+    borderColor: '#393C44',
   },
   passwordInput: {
     flex: 1,
-    minWidth: 0,
+    height: 52,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: '#111827',
+    color: '#FFFFFF',
     fontSize: 15,
   },
-  passwordToggle: { paddingHorizontal: 10, paddingVertical: 12 },
-  passwordToggleText: { color: '#2563EB', fontSize: 12, fontWeight: '700' },
-  errorBox: {
-    marginTop: 16,
+  passwordToggle: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  passwordToggleText: {
+    color: '#E0A526',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  errorContainer: {
+    backgroundColor: '#3A2024',
+    borderRadius: 10,
     padding: 12,
-    borderRadius: 12,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FECACA',
+    marginBottom: 16,
   },
-  errorText: { color: '#B91C1C', fontSize: 13, lineHeight: 19 },
+  errorText: {
+    color: '#FF7777',
+    fontSize: 13,
+    lineHeight: 19,
+  },
   primaryButton: {
-    minHeight: 52,
-    borderRadius: 13,
-    backgroundColor: '#111827',
+    height: 54,
+    backgroundColor: '#D99B20',
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
-    marginTop: 22,
+    marginTop: 8,
   },
-  buttonDisabled: { opacity: 0.65 },
-  primaryButtonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  footnote: {
-    marginTop: 13,
-    color: '#9CA3AF',
-    fontSize: 11,
-    lineHeight: 17,
-    textAlign: 'center',
+  primaryButtonText: {
+    color: '#171717',
+    fontSize: 16,
+    fontWeight: '700',
   },
-  coachRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 20,
+  disabledButton: {
+    opacity: 0.6,
   },
-  coachText: { color: '#6B7280', fontSize: 13 },
-  coachLink: { color: '#2563EB', fontSize: 13, fontWeight: '700' },
-  loginRow: {
+  footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
-    marginTop: 16,
+    marginTop: 24,
   },
-  loginText: { color: '#6B7280', fontSize: 13 },
-  loginLink: { color: '#2563EB', fontSize: 13, fontWeight: '700' },
+  footerText: {
+    color: '#A0A0A0',
+    fontSize: 14,
+  },
+  footerLink: {
+    color: '#E0A526',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   successContainer: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 26,
+    alignItems: 'center',
+    paddingHorizontal: 28,
   },
   successIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 22,
-    backgroundColor: '#DCFCE7',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#D99B20',
     alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'center',
-    marginBottom: 22,
+    marginBottom: 24,
   },
-  successIconText: { color: '#15803D', fontSize: 32, fontWeight: '800' },
+  successIconText: {
+    color: '#171717',
+    fontSize: 40,
+    fontWeight: '700',
+  },
   successTitle: {
-    fontSize: 27,
-    fontWeight: '800',
-    color: '#111827',
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '700',
     textAlign: 'center',
+    marginBottom: 12,
   },
   successText: {
-    marginTop: 12,
+    color: '#A0A0A0',
     fontSize: 15,
-    lineHeight: 23,
-    color: '#6B7280',
+    lineHeight: 22,
     textAlign: 'center',
+    marginBottom: 28,
   },
 });

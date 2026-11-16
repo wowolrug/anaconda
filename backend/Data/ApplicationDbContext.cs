@@ -25,7 +25,6 @@ public class ApplicationDbContext
     public DbSet<AthleteNote> AthleteNotes => Set<AthleteNote>();
     public DbSet<GroupMetric> GroupMetrics => Set<GroupMetric>();
 
-    // Настройки регистрации тренеров.
     public DbSet<CoachRegistrationSettings> CoachRegistrationSettings
         => Set<CoachRegistrationSettings>();
 
@@ -53,13 +52,35 @@ public class ApplicationDbContext
         // ==============================
 
         builder.Entity<AthleteProfile>()
-            .HasKey(x => x.UserId);
+            .HasKey(x => x.AthleteProfileId);
 
+        builder.Entity<AthleteProfile>()
+            .Property(x => x.Name)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        builder.Entity<AthleteProfile>()
+            .Property(x => x.Surname)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        // Необязательная связь профиля с аккаунтом спортсмена.
         builder.Entity<AthleteProfile>()
             .HasOne(x => x.User)
             .WithOne(x => x.AthleteProfile)
             .HasForeignKey<AthleteProfile>(x => x.UserId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.Entity<AthleteProfile>()
+            .HasIndex(x => x.UserId)
+            .IsUnique();
+
+        // Пользователь, создавший профиль.
+        builder.Entity<AthleteProfile>()
+            .HasOne(x => x.CreatedBy)
+            .WithMany(x => x.CreatedAthleteProfiles)
+            .HasForeignKey(x => x.CreatedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
 
 
         // ==============================
@@ -67,7 +88,11 @@ public class ApplicationDbContext
         // ==============================
 
         builder.Entity<ParentAthlete>()
-            .HasKey(x => new { x.ParentId, x.AthleteId });
+            .HasKey(x => new
+            {
+                x.ParentId,
+                x.AthleteProfileId
+            });
 
         builder.Entity<ParentAthlete>()
             .HasOne(x => x.Parent)
@@ -76,15 +101,10 @@ public class ApplicationDbContext
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<ParentAthlete>()
-            .HasOne(x => x.Athlete)
+            .HasOne(x => x.AthleteProfile)
             .WithMany(x => x.Parents)
-            .HasForeignKey(x => x.AthleteId)
+            .HasForeignKey(x => x.AthleteProfileId)
             .OnDelete(DeleteBehavior.Restrict);
-
-        builder.Entity<ParentAthlete>()
-            .ToTable(t => t.HasCheckConstraint(
-                "CK_ParentAthlete_NotSelf",
-                "\"ParentId\" <> \"AthleteId\""));
 
 
         // ==============================
@@ -143,16 +163,16 @@ public class ApplicationDbContext
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<GroupMembership>()
-            .HasOne(x => x.Athlete)
+            .HasOne(x => x.AthleteProfile)
             .WithMany(x => x.GroupMemberships)
-            .HasForeignKey(x => x.AthleteId)
+            .HasForeignKey(x => x.AthleteProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<GroupMembership>()
             .HasIndex(x => new
             {
                 x.TrainingGroupId,
-                x.AthleteId
+                x.AthleteProfileId
             })
             .IsUnique()
             .HasFilter("\"LeftDate\" IS NULL");
@@ -198,16 +218,16 @@ public class ApplicationDbContext
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<TrainingParticipant>()
-            .HasOne(x => x.Athlete)
+            .HasOne(x => x.AthleteProfile)
             .WithMany(x => x.TrainingParticipations)
-            .HasForeignKey(x => x.AthleteId)
+            .HasForeignKey(x => x.AthleteProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<TrainingParticipant>()
             .HasIndex(x => new
             {
                 x.TrainingId,
-                x.AthleteId
+                x.AthleteProfileId
             })
             .IsUnique();
 
@@ -221,9 +241,9 @@ public class ApplicationDbContext
             .HasPrecision(8, 2);
 
         builder.Entity<PhysicalMeasurement>()
-            .HasOne(x => x.Athlete)
+            .HasOne(x => x.AthleteProfile)
             .WithMany(x => x.Measurements)
-            .HasForeignKey(x => x.AthleteId)
+            .HasForeignKey(x => x.AthleteProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<PhysicalMeasurement>()
@@ -241,7 +261,7 @@ public class ApplicationDbContext
         builder.Entity<PhysicalMeasurement>()
             .HasIndex(x => new
             {
-                x.AthleteId,
+                x.AthleteProfileId,
                 x.Type,
                 x.MeasuredAt
             });
@@ -249,7 +269,7 @@ public class ApplicationDbContext
         builder.Entity<PhysicalMeasurement>()
             .HasIndex(x => new
             {
-                x.AthleteId,
+                x.AthleteProfileId,
                 x.GroupMetricId,
                 x.MeasuredAt
             });
@@ -265,9 +285,9 @@ public class ApplicationDbContext
             .IsRequired();
 
         builder.Entity<AthleteNote>()
-            .HasOne(x => x.Athlete)
-            .WithMany(x => x.AthleteNotes)
-            .HasForeignKey(x => x.AthleteId)
+            .HasOne(x => x.AthleteProfile)
+            .WithMany(x => x.Notes)
+            .HasForeignKey(x => x.AthleteProfileId)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.Entity<AthleteNote>()

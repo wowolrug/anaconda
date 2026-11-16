@@ -21,7 +21,7 @@ public static class DevelopmentDataSeeder
             throw new InvalidOperationException(
                 "Development coach was not found. Seed the coach first.");
 
-        var athletes = new List<User>();
+        var athletes = new List<AthleteProfile>();
 
         var athleteData = new[]
         {
@@ -35,6 +35,7 @@ public static class DevelopmentDataSeeder
         foreach (var item in athleteData)
         {
             var (email, name, surname, gender, weightClass) = item;
+
             var athlete = await users.FindByEmailAsync(email);
 
             if (athlete is null)
@@ -48,7 +49,9 @@ public static class DevelopmentDataSeeder
                     EmailConfirmed = true
                 };
 
-                var result = await users.CreateAsync(athlete, "AthletePass123!");
+                var result = await users.CreateAsync(
+                    athlete,
+                    "AthletePass123!");
 
                 if (!result.Succeeded)
                     throw new InvalidOperationException(
@@ -64,18 +67,35 @@ public static class DevelopmentDataSeeder
                         string.Join("; ", roleResult.Errors.Select(e => e.Description)));
             }
 
-            if (!await db.AthleteProfiles.AnyAsync(p => p.UserId == athlete.Id))
+            var profile = await db.AthleteProfiles
+                .FirstOrDefaultAsync(p => p.UserId == athlete.Id);
+
+            if (profile is null)
             {
-                db.AthleteProfiles.Add(new AthleteProfile
+                profile = new AthleteProfile
                 {
                     UserId = athlete.Id,
+                    Name = name,
+                    Surname = surname,
                     Gender = gender,
                     WeightCategory = weightClass,
                     BeltColor = "Белый"
-                });
+                };
+
+                db.AthleteProfiles.Add(profile);
+            }
+            else
+            {
+                profile.Name = name;
+                profile.Surname = surname;
+                profile.Gender = gender;
+                profile.WeightCategory = weightClass;
+
+                if (string.IsNullOrWhiteSpace(profile.BeltColor))
+                    profile.BeltColor = "Белый";
             }
 
-            athletes.Add(athlete);
+            athletes.Add(profile);
         }
 
         await db.SaveChangesAsync();
@@ -117,7 +137,7 @@ public static class DevelopmentDataSeeder
 
             var membershipExists = await db.GroupMemberships.AnyAsync(m =>
                 m.TrainingGroupId == group.TrainingGroupId &&
-                m.AthleteId == athlete.Id &&
+                m.AthleteProfileId == athlete.AthleteProfileId &&
                 m.LeftDate == null);
 
             if (!membershipExists)
@@ -125,7 +145,7 @@ public static class DevelopmentDataSeeder
                 db.GroupMemberships.Add(new GroupMembership
                 {
                     TrainingGroupId = group.TrainingGroupId,
-                    AthleteId = athlete.Id,
+                    AthleteProfileId = athlete.AthleteProfileId,
                     JoinedDate = DateTime.UtcNow.Date
                 });
             }
@@ -175,19 +195,19 @@ public static class DevelopmentDataSeeder
             db.Trainings.Add(training);
             await db.SaveChangesAsync();
 
-            var groupAthletes = await db.GroupMemberships
+            var groupAthleteProfileIds = await db.GroupMemberships
                 .Where(m =>
                     m.TrainingGroupId == group.TrainingGroupId &&
                     m.LeftDate == null)
-                .Select(m => m.AthleteId)
+                .Select(m => m.AthleteProfileId)
                 .ToListAsync();
 
-            foreach (var athleteId in groupAthletes)
+            foreach (var athleteProfileId in groupAthleteProfileIds)
             {
                 db.TrainingParticipants.Add(new TrainingParticipant
                 {
                     TrainingId = training.TrainingId,
-                    AthleteId = athleteId,
+                    AthleteProfileId = athleteProfileId,
                     Status = status == TrainingStatus.Completed
                         ? AttendanceStatus.Present
                         : AttendanceStatus.Unmarked
@@ -199,8 +219,10 @@ public static class DevelopmentDataSeeder
 
         foreach (var athlete in athletes)
         {
+            var athleteProfileId = athlete.AthleteProfileId;
+
             var measurementExists = await db.PhysicalMeasurements.AnyAsync(m =>
-                m.AthleteId == athlete.Id &&
+                m.AthleteProfileId == athleteProfileId &&
                 m.RecordedByUserId == coach.Id &&
                 m.Type == MeasurementType.Weight);
 
@@ -208,17 +230,17 @@ public static class DevelopmentDataSeeder
             {
                 db.PhysicalMeasurements.Add(new PhysicalMeasurement
                 {
-                    AthleteId = athlete.Id,
+                    AthleteProfileId = athleteProfileId,
                     RecordedByUserId = coach.Id,
                     Type = MeasurementType.Weight,
-                    Value = 55 + athlete.Id % 20,
+                    Value = 55 + athleteProfileId % 20,
                     MeasuredAt = DateTime.UtcNow,
                     Note = "Тестовый показатель"
                 });
             }
 
             var noteExists = await db.AthleteNotes.AnyAsync(n =>
-                n.AthleteId == athlete.Id &&
+                n.AthleteProfileId == athleteProfileId &&
                 n.AuthorUserId == coach.Id &&
                 n.Text == "Тестовая заметка тренера");
 
@@ -226,7 +248,7 @@ public static class DevelopmentDataSeeder
             {
                 db.AthleteNotes.Add(new AthleteNote
                 {
-                    AthleteId = athlete.Id,
+                    AthleteProfileId = athleteProfileId,
                     AuthorUserId = coach.Id,
                     Type = NoteType.Coach,
                     Text = "Тестовая заметка тренера",

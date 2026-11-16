@@ -1,27 +1,61 @@
 
 using System.ComponentModel.DataAnnotations;
+using System.Text.RegularExpressions;
 
 namespace backend.DTOs;
 
-public class CoachRegisterDto
+public class CoachRegisterDto : IValidatableObject
 {
-    [Required]
-    [StringLength(100)]
+    [Required(ErrorMessage = "Введи имя.")]
+    [StringLength(100, MinimumLength = 1)]
     public string Name { get; set; } = string.Empty;
 
-    [Required]
-    [StringLength(100)]
+    [Required(ErrorMessage = "Введи фамилию.")]
+    [StringLength(100, MinimumLength = 1)]
     public string Surname { get; set; } = string.Empty;
 
-    [Required]
-    [EmailAddress]
+    [Required(ErrorMessage = "Введи электронную почту.")]
+    [EmailAddress(ErrorMessage = "Введи корректный адрес электронной почты.")]
+    [StringLength(254)]
     public string Email { get; set; } = string.Empty;
 
-    [Required]
-    [MinLength(8)]
+    [Phone]
+    [StringLength(30)]
+    public string? PhoneNumber { get; set; }
+
+    [Required(ErrorMessage = "Введи пароль.")]
+    [MinLength(6, ErrorMessage = "Пароль должен содержать не менее 6 символов.")]
+    [MaxLength(128, ErrorMessage = "Пароль не должен превышать 128 символов.")]
     public string Password { get; set; } = string.Empty;
 
     [Required]
     [StringLength(100)]
     public string InvitationCode { get; set; } = string.Empty;
+
+    public IEnumerable<ValidationResult> Validate(
+        ValidationContext validationContext)
+    {
+        if (string.IsNullOrWhiteSpace(PhoneNumber))
+            yield break;
+
+        var phone = PhoneNumber.Trim();
+
+        if (!Regex.IsMatch(phone, @"^\+?[0-9\s().-]+$"))
+        {
+            yield return new ValidationResult(
+                "Введи корректный номер телефона.",
+                new[] { nameof(PhoneNumber) });
+
+            yield break;
+        }
+
+        var digitsCount = phone.Count(char.IsDigit);
+
+        if (digitsCount < 7 || digitsCount > 15)
+        {
+            yield return new ValidationResult(
+                "Номер телефона должен содержать от 7 до 15 цифр.",
+                new[] { nameof(PhoneNumber) });
+        }
+    }
 }

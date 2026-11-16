@@ -4,7 +4,6 @@ using backend.Data;
 using backend.DTOs;
 using backend.Models;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,14 +15,10 @@ namespace backend.Controllers;
 public class GroupsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
-    private readonly UserManager<User> _userManager;
 
-    public GroupsController(
-        ApplicationDbContext db,
-        UserManager<User> userManager)
+    public GroupsController(ApplicationDbContext db)
     {
         _db = db;
-        _userManager = userManager;
     }
 
     private int? GetCurrentUserId()
@@ -45,6 +40,24 @@ public class GroupsController : ControllerBase
             g.CoachId == coachId &&
             !g.IsArchived);
     }
+
+    // Профиль доступен тренеру, если:
+    // 1. Он создан этим тренером.
+    // 2. Он связан с аккаунтом спортсмена (совместимость со старой системой).
+    // 3. У него есть история членства в группах этого тренера.
+    private IQueryable<AthleteProfile> GetVisibleAthleteProfiles(
+        int coachId)
+    {
+        return _db.AthleteProfiles.Where(a =>
+            a.CreatedByUserId == coachId ||
+            a.UserId != null ||
+            a.GroupMemberships.Any(m =>
+                m.TrainingGroup.CoachId == coachId));
+    }
+
+    // ==============================
+    // GROUPS
+    // ==============================
 
     [HttpGet]
     public async Task<IActionResult> GetGroups()
@@ -73,7 +86,7 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.Athlete.IsArchived)
+                         !m.AthleteProfile.IsArchived)
             })
             .ToListAsync();
 
@@ -103,7 +116,7 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.Athlete.IsArchived)
+                         !m.AthleteProfile.IsArchived)
             })
             .ToListAsync();
 
@@ -138,7 +151,7 @@ public class GroupsController : ControllerBase
                 g.CoachId,
                 AthletesCount = g.Memberships.Count(
                     m => m.LeftDate == null &&
-                         !m.Athlete.IsArchived)
+                         !m.AthleteProfile.IsArchived)
             })
             .FirstOrDefaultAsync();
 
@@ -292,26 +305,89 @@ public class GroupsController : ControllerBase
         });
     }
 
+    // ==============================
+    // ATHLETE PROFILES
+    // ==============================
+
+    // Создание профиля спортсмена без аккаунта.
+    [HttpPost("athletes")]
+    [Authorize(Roles = "Coach")]
+    public async Task<IActionResult> CreateAthleteProfile(
+        CreateAthleteProfileDto dto)
+    {
+        var coachId = GetCurrentUserId();
+
+        if (coachId is null)
+            return Unauthorized();
+
+        var name = dto.Name.Trim();
+        var surname = dto.Surname.Trim();
+
+        if (string.IsNullOrWhiteSpace(name) ||
+            string.IsNullOrWhiteSpace(surname))
+        {
+            return BadRequest(new
+            {
+                message = "Name and surname are required."
+            });
+        }
+
+        var profile = new AthleteProfile
+        {
+            Name = name,
+            Surname = surname,
+            Gender = dto.Gender,
+            BeltColor = dto.BeltColor?.Trim(),
+            WeightCategory = dto.WeightCategory,
+            CreatedByUserId = coachId.Value,
+            UserId = null,
+            IsArchived = false
+        };
+
+        _db.AthleteProfiles.Add(profile);
+
+        await _db.SaveChangesAsync();
+
+        return Created(
+            $"/api/Groups/athletes/{profile.AthleteProfileId}",
+            new
+            {
+                AthleteId = profile.AthleteProfileId,
+                profile.AthleteProfileId,
+                profile.Name,
+                profile.Surname,
+                profile.Gender,
+                profile.BeltColor,
+                profile.WeightCategory,
+                profile.IsArchived
+            });
+    }
+
     [HttpGet("athletes/available")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> GetAvailableAthletes()
     {
-        var athletes = await _userManager.GetUsersInRoleAsync("Athlete");
+        var coachId = GetCurrentUserId();
 
-        var result = athletes
+        if (coachId is null)
+            return Unauthorized();
+
+        var athletes = await GetVisibleAthleteProfiles(coachId.Value)
+            .AsNoTracking()
             .Where(a => !a.IsArchived)
             .OrderBy(a => a.Surname)
             .ThenBy(a => a.Name)
             .Select(a => new
             {
-                AthleteId = a.Id,
+                AthleteId = a.AthleteProfileId,
+                a.AthleteProfileId,
                 a.Name,
                 a.Surname,
-                a.Email
+                Email = a.User != null ? a.User.Email : null
             })
-            .ToList();
+            .ToListAsync();
 
-        return Ok(result);
+        return Ok(athletes);
     }
 
     [HttpGet("athletes/archived")]
@@ -323,31 +399,22 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var athleteIds = await _db.GroupMemberships
+        var athletes = await GetVisibleAthleteProfiles(coachId.Value)
             .AsNoTracking()
-            .Where(m => m.TrainingGroup.CoachId == coachId.Value)
-            .Select(m => m.AthleteId)
-            .Distinct()
-            .ToListAsync();
-
-        var athletes = await _userManager.GetUsersInRoleAsync("Athlete");
-
-        var result = athletes
-            .Where(a =>
-                a.IsArchived &&
-                athleteIds.Contains(a.Id))
+            .Where(a => a.IsArchived)
             .OrderBy(a => a.Surname)
             .ThenBy(a => a.Name)
             .Select(a => new
             {
-                AthleteId = a.Id,
+                AthleteId = a.AthleteProfileId,
+                a.AthleteProfileId,
                 a.Name,
                 a.Surname,
-                a.Email
+                Email = a.User != null ? a.User.Email : null
             })
-            .ToList();
+            .ToListAsync();
 
-        return Ok(result);
+        return Ok(athletes);
     }
 
     [HttpDelete("athletes/{athleteId:int}/archive")]
@@ -359,11 +426,11 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var athlete = await _userManager.FindByIdAsync(
-            athleteId.ToString());
+        var athlete = await _db.AthleteProfiles
+            .FirstOrDefaultAsync(a =>
+                a.AthleteProfileId == athleteId);
 
-        if (athlete is null ||
-            !await _userManager.IsInRoleAsync(athlete, "Athlete"))
+        if (athlete is null)
         {
             return NotFound(new
             {
@@ -373,17 +440,19 @@ public class GroupsController : ControllerBase
 
         var belongsToCoach = await _db.GroupMemberships
             .AnyAsync(m =>
-                m.AthleteId == athleteId &&
+                m.AthleteProfileId == athleteId &&
                 m.LeftDate == null &&
                 m.TrainingGroup.CoachId == coachId.Value &&
                 !m.TrainingGroup.IsArchived);
 
-        if (!belongsToCoach)
+        var createdByCoach =
+            athlete.CreatedByUserId == coachId.Value;
+
+        if (!belongsToCoach && !createdByCoach)
         {
             return NotFound(new
             {
-                message =
-                    "Active athlete membership in your groups was not found."
+                message = "Athlete not found."
             });
         }
 
@@ -398,10 +467,10 @@ public class GroupsController : ControllerBase
         athlete.IsArchived = true;
 
         // Закрываем активное членство во всех группах,
-        // сохраняя историю членства.
+        // сохраняя историю.
         var activeMemberships = await _db.GroupMemberships
             .Where(m =>
-                m.AthleteId == athleteId &&
+                m.AthleteProfileId == athleteId &&
                 m.LeftDate == null)
             .ToListAsync();
 
@@ -412,22 +481,12 @@ public class GroupsController : ControllerBase
             membership.LeftDate = now;
         }
 
-        var updateResult = await _userManager.UpdateAsync(athlete);
-
-        if (!updateResult.Succeeded)
-        {
-            return BadRequest(new
-            {
-                errors = updateResult.Errors.Select(e => e.Description)
-            });
-        }
-
         await _db.SaveChangesAsync();
 
         return Ok(new
         {
             message = "Athlete archived.",
-            AthleteId = athlete.Id,
+            AthleteId = athlete.AthleteProfileId,
             athlete.IsArchived
         });
     }
@@ -441,11 +500,11 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var athlete = await _userManager.FindByIdAsync(
-            athleteId.ToString());
+        var athlete = await _db.AthleteProfiles
+            .FirstOrDefaultAsync(a =>
+                a.AthleteProfileId == athleteId);
 
-        if (athlete is null ||
-            !await _userManager.IsInRoleAsync(athlete, "Athlete"))
+        if (athlete is null)
         {
             return NotFound(new
             {
@@ -455,14 +514,17 @@ public class GroupsController : ControllerBase
 
         var hasMembershipHistory = await _db.GroupMemberships
             .AnyAsync(m =>
-                m.AthleteId == athleteId &&
+                m.AthleteProfileId == athleteId &&
                 m.TrainingGroup.CoachId == coachId.Value);
 
-        if (!hasMembershipHistory)
+        var createdByCoach =
+            athlete.CreatedByUserId == coachId.Value;
+
+        if (!hasMembershipHistory && !createdByCoach)
         {
             return NotFound(new
             {
-                message = "Athlete not found in your group history."
+                message = "Athlete not found in your profile or group history."
             });
         }
 
@@ -476,23 +538,19 @@ public class GroupsController : ControllerBase
 
         athlete.IsArchived = false;
 
-        var updateResult = await _userManager.UpdateAsync(athlete);
-
-        if (!updateResult.Succeeded)
-        {
-            return BadRequest(new
-            {
-                errors = updateResult.Errors.Select(e => e.Description)
-            });
-        }
+        await _db.SaveChangesAsync();
 
         return Ok(new
         {
             message = "Athlete restored.",
-            AthleteId = athlete.Id,
+            AthleteId = athlete.AthleteProfileId,
             athlete.IsArchived
         });
     }
+
+    // ==============================
+    // GROUP ATHLETES
+    // ==============================
 
     [HttpGet("{id:int}/athletes/available")]
     [Authorize(Roles = "Coach")]
@@ -503,7 +561,9 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(
+            id,
+            coachId.Value);
 
         if (!groupExists)
         {
@@ -518,27 +578,27 @@ public class GroupsController : ControllerBase
             .Where(m =>
                 m.TrainingGroupId == id &&
                 m.LeftDate == null &&
-                !m.Athlete.IsArchived)
-            .Select(m => m.AthleteId)
+                !m.AthleteProfile.IsArchived)
+            .Select(m => m.AthleteProfileId)
             .ToListAsync();
 
-        var allAthletes = await _userManager
-            .GetUsersInRoleAsync("Athlete");
-
-        var availableAthletes = allAthletes
+        var availableAthletes = await GetVisibleAthleteProfiles(
+                coachId.Value)
+            .AsNoTracking()
             .Where(a =>
                 !a.IsArchived &&
-                !activeAthleteIds.Contains(a.Id))
+                !activeAthleteIds.Contains(a.AthleteProfileId))
             .OrderBy(a => a.Surname)
             .ThenBy(a => a.Name)
             .Select(a => new
             {
-                AthleteId = a.Id,
+                AthleteId = a.AthleteProfileId,
+                a.AthleteProfileId,
                 a.Name,
                 a.Surname,
-                a.Email
+                Email = a.User != null ? a.User.Email : null
             })
-            .ToList();
+            .ToListAsync();
 
         return Ok(availableAthletes);
     }
@@ -552,7 +612,9 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(
+            id,
+            coachId.Value);
 
         if (!groupExists)
         {
@@ -567,15 +629,18 @@ public class GroupsController : ControllerBase
             .Where(m =>
                 m.TrainingGroupId == id &&
                 m.LeftDate == null &&
-                !m.Athlete.IsArchived)
-            .OrderBy(m => m.Athlete.Surname)
-            .ThenBy(m => m.Athlete.Name)
+                !m.AthleteProfile.IsArchived)
+            .OrderBy(m => m.AthleteProfile.Surname)
+            .ThenBy(m => m.AthleteProfile.Name)
             .Select(m => new
             {
-                m.AthleteId,
-                m.Athlete.Name,
-                m.Athlete.Surname,
-                m.Athlete.Email,
+                AthleteId = m.AthleteProfileId,
+                m.AthleteProfileId,
+                m.AthleteProfile.Name,
+                m.AthleteProfile.Surname,
+                Email = m.AthleteProfile.User != null
+                    ? m.AthleteProfile.User.Email
+                    : null,
                 m.JoinedDate
             })
             .ToListAsync();
@@ -594,7 +659,9 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(
+            id,
+            coachId.Value);
 
         if (!groupExists)
         {
@@ -607,15 +674,14 @@ public class GroupsController : ControllerBase
         var membership = await _db.GroupMemberships
             .FirstOrDefaultAsync(m =>
                 m.TrainingGroupId == id &&
-                m.AthleteId == athleteId &&
+                m.AthleteProfileId == athleteId &&
                 m.LeftDate == null);
 
         if (membership is null)
         {
             return NotFound(new
             {
-                message =
-                    "Active athlete membership not found."
+                message = "Active athlete membership not found."
             });
         }
 
@@ -637,7 +703,9 @@ public class GroupsController : ControllerBase
         if (coachId is null)
             return Unauthorized();
 
-        var groupExists = await CoachOwnsActiveGroup(id, coachId.Value);
+        var groupExists = await CoachOwnsActiveGroup(
+            id,
+            coachId.Value);
 
         if (!groupExists)
         {
@@ -647,23 +715,38 @@ public class GroupsController : ControllerBase
             });
         }
 
-        var athlete = await _userManager.FindByIdAsync(
-            dto.AthleteId.ToString());
+        var athlete = await _db.AthleteProfiles
+            .FirstOrDefaultAsync(a =>
+                a.AthleteProfileId == dto.AthleteId &&
+                !a.IsArchived);
 
-        if (athlete is null ||
-            athlete.IsArchived ||
-            !await _userManager.IsInRoleAsync(athlete, "Athlete"))
+        if (athlete is null)
         {
             return NotFound(new
             {
-                message = "Active athlete not found."
+                message = "Active athlete profile not found."
+            });
+        }
+
+        var isVisibleToCoach =
+            athlete.CreatedByUserId == coachId.Value ||
+            athlete.UserId != null ||
+            await _db.GroupMemberships.AnyAsync(m =>
+                m.AthleteProfileId == athlete.AthleteProfileId &&
+                m.TrainingGroup.CoachId == coachId.Value);
+
+        if (!isVisibleToCoach)
+        {
+            return NotFound(new
+            {
+                message = "Athlete profile not found."
             });
         }
 
         var alreadyMember = await _db.GroupMemberships
             .AnyAsync(m =>
                 m.TrainingGroupId == id &&
-                m.AthleteId == dto.AthleteId &&
+                m.AthleteProfileId == dto.AthleteId &&
                 m.LeftDate == null);
 
         if (alreadyMember)
@@ -681,7 +764,7 @@ public class GroupsController : ControllerBase
         var membership = new GroupMembership
         {
             TrainingGroupId = id,
-            AthleteId = dto.AthleteId,
+            AthleteProfileId = dto.AthleteId,
             JoinedDate = now
         };
 
@@ -692,13 +775,14 @@ public class GroupsController : ControllerBase
                 t.TrainingGroupId == id &&
                 t.Status == TrainingStatus.Planned &&
                 (t.Date.Date > today ||
-                (t.Date.Date == today && t.StartTime > currentTime)))
+                 (t.Date.Date == today &&
+                  t.StartTime > currentTime)))
             .Select(t => t.TrainingId)
             .ToListAsync();
 
         var existingTrainingIds = await _db.TrainingParticipants
             .Where(p =>
-                p.AthleteId == dto.AthleteId &&
+                p.AthleteProfileId == dto.AthleteId &&
                 futureTrainings.Contains(p.TrainingId))
             .Select(p => p.TrainingId)
             .ToListAsync();
@@ -710,7 +794,7 @@ public class GroupsController : ControllerBase
             .Select(trainingId => new TrainingParticipant
             {
                 TrainingId = trainingId,
-                AthleteId = dto.AthleteId,
+                AthleteProfileId = dto.AthleteId,
                 Status = AttendanceStatus.Unmarked
             })
             .ToList();
@@ -726,7 +810,8 @@ public class GroupsController : ControllerBase
             {
                 membership.GroupMembershipId,
                 membership.TrainingGroupId,
-                membership.AthleteId,
+                AthleteId = membership.AthleteProfileId,
+                membership.AthleteProfileId,
                 membership.JoinedDate,
                 AddedToFutureTrainings = newParticipants.Count
             });

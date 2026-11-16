@@ -1,3 +1,4 @@
+
 using System.Security.Claims;
 using backend.Data;
 using backend.DTOs;
@@ -41,7 +42,18 @@ public class AthleteNotesController : ControllerBase
         return null;
     }
 
-    private async Task<bool> CanAccessAthleteAsync(int athleteId)
+    private IQueryable<int> GetCoachAthleteProfileIds(int coachId)
+    {
+        return _db.GroupMemberships
+            .Where(m =>
+                m.LeftDate == null &&
+                m.TrainingGroup.CoachId == coachId)
+            .Select(m => m.AthleteProfileId)
+            .Distinct();
+    }
+
+    private async Task<bool> CanAccessAthleteAsync(
+        int athleteProfileId)
     {
         var userId = GetCurrentUserId();
 
@@ -50,22 +62,22 @@ public class AthleteNotesController : ControllerBase
 
         if (User.IsInRole("Coach"))
         {
-            return await _db.GroupMemberships.AnyAsync(m =>
-                m.AthleteId == athleteId &&
-                m.LeftDate == null &&
-                _db.TrainingGroups.Any(g =>
-                    g.TrainingGroupId == m.TrainingGroupId &&
-                    g.CoachId == userId.Value));
+            return await GetCoachAthleteProfileIds(userId.Value)
+                .AnyAsync(id => id == athleteProfileId);
         }
 
         if (User.IsInRole("Athlete"))
-            return userId.Value == athleteId;
+        {
+            return await _db.AthleteProfiles.AnyAsync(a =>
+                a.AthleteProfileId == athleteProfileId &&
+                a.UserId == userId.Value);
+        }
 
         if (User.IsInRole("Parent"))
         {
             return await _db.ParentAthletes.AnyAsync(pa =>
                 pa.ParentId == userId.Value &&
-                pa.AthleteId == athleteId);
+                pa.AthleteProfileId == athleteProfileId);
         }
 
         return false;
@@ -75,18 +87,26 @@ public class AthleteNotesController : ControllerBase
     public async Task<IActionResult> GetAthleteNotes(int athleteId)
     {
         if (!await CanAccessAthleteAsync(athleteId))
-            return NotFound(new { message = "Athlete not found." });
+        {
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
+        }
 
         var currentUserId = GetCurrentUserId();
 
         var notes = await _db.AthleteNotes
             .AsNoTracking()
-            .Where(n => n.AthleteId == athleteId)
+            .Where(n => n.AthleteProfileId == athleteId)
             .OrderByDescending(n => n.CreatedAt)
             .Select(n => new
             {
                 n.AthleteNoteId,
-                n.AthleteId,
+
+                AthleteId = n.AthleteProfileId,
+                n.AthleteProfileId,
+
                 n.AuthorUserId,
                 n.TrainingId,
                 n.Type,
@@ -116,7 +136,12 @@ public class AthleteNotesController : ControllerBase
             return Forbid();
 
         if (!await CanAccessAthleteAsync(athleteId))
-            return NotFound(new { message = "Athlete not found." });
+        {
+            return NotFound(new
+            {
+                message = "Athlete not found."
+            });
+        }
 
         if (string.IsNullOrWhiteSpace(dto.Text))
         {
@@ -131,7 +156,7 @@ public class AthleteNotesController : ControllerBase
             var trainingBelongsToAthlete =
                 await _db.TrainingParticipants.AnyAsync(p =>
                     p.TrainingId == dto.TrainingId.Value &&
-                    p.AthleteId == athleteId);
+                    p.AthleteProfileId == athleteId);
 
             if (!trainingBelongsToAthlete)
             {
@@ -140,22 +165,11 @@ public class AthleteNotesController : ControllerBase
                     message = "Training is not assigned to this athlete."
                 });
             }
-
-            var trainingExists = await _db.Trainings.AnyAsync(t =>
-                t.TrainingId == dto.TrainingId.Value);
-
-            if (!trainingExists)
-            {
-                return BadRequest(new
-                {
-                    message = "Training not found."
-                });
-            }
         }
 
         var note = new AthleteNote
         {
-            AthleteId = athleteId,
+            AthleteProfileId = athleteId,
             AuthorUserId = userId.Value,
             Type = noteType.Value,
             Text = dto.Text.Trim(),
@@ -171,7 +185,8 @@ public class AthleteNotesController : ControllerBase
             new
             {
                 note.AthleteNoteId,
-                note.AthleteId,
+                AthleteId = note.AthleteProfileId,
+                note.AthleteProfileId,
                 note.AuthorUserId,
                 note.TrainingId,
                 note.Type,
@@ -195,7 +210,10 @@ public class AthleteNotesController : ControllerBase
             .FirstOrDefaultAsync(n => n.AthleteNoteId == id);
 
         if (note is null)
-            return NotFound(new { message = "Note not found." });
+            return NotFound(new
+            {
+                message = "Note not found."
+            });
 
         if (note.AuthorUserId != userId.Value)
             return Forbid();
@@ -213,7 +231,7 @@ public class AthleteNotesController : ControllerBase
             var trainingBelongsToAthlete =
                 await _db.TrainingParticipants.AnyAsync(p =>
                     p.TrainingId == dto.TrainingId.Value &&
-                    p.AthleteId == note.AthleteId);
+                    p.AthleteProfileId == note.AthleteProfileId);
 
             if (!trainingBelongsToAthlete)
             {
@@ -245,7 +263,10 @@ public class AthleteNotesController : ControllerBase
             .FirstOrDefaultAsync(n => n.AthleteNoteId == id);
 
         if (note is null)
-            return NotFound(new { message = "Note not found." });
+            return NotFound(new
+            {
+                message = "Note not found."
+            });
 
         if (note.AuthorUserId != userId.Value)
             return Forbid();

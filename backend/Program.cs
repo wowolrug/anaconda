@@ -1,3 +1,4 @@
+
 using System.Text;
 using backend.Data;
 using backend.Models;
@@ -21,7 +22,13 @@ builder.Services
     .AddIdentity<User, IdentityRole<int>>(options =>
     {
         options.User.RequireUniqueEmail = true;
-        options.Password.RequiredLength = 8;
+
+        options.Password.RequiredLength = 6;
+        options.Password.RequiredUniqueChars = 1;
+        options.Password.RequireDigit = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireNonAlphanumeric = false;
     })
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddDefaultTokenProviders();

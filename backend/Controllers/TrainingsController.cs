@@ -34,6 +34,10 @@ public class TrainingsController : ControllerBase
             out userId);
     }
 
+    // ==============================
+    // ACCESS FILTER
+    // ==============================
+
     private IQueryable<Training> ApplyAccessFilter(
         IQueryable<Training> query,
         int userId)
@@ -46,7 +50,8 @@ public class TrainingsController : ControllerBase
         if (User.IsInRole("Athlete"))
         {
             return query.Where(t =>
-                t.Participants.Any(p => p.AthleteId == userId));
+                t.Participants.Any(p =>
+                    p.AthleteProfile.UserId == userId));
         }
 
         if (User.IsInRole("Parent"))
@@ -55,13 +60,16 @@ public class TrainingsController : ControllerBase
                 t.Participants.Any(p =>
                     _db.ParentAthletes.Any(pa =>
                         pa.ParentId == userId &&
-                        pa.AthleteId == p.AthleteId)));
+                        pa.AthleteProfileId == p.AthleteProfileId)));
         }
 
         return query.Where(t => false);
     }
 
-    // Получаем текущее московское время.
+    // ==============================
+    // TIME AND STATUS
+    // ==============================
+
     private static DateTime GetMoscowNow()
     {
         return TimeZoneInfo.ConvertTimeFromUtc(
@@ -69,17 +77,13 @@ public class TrainingsController : ControllerBase
             MoscowTimeZone);
     }
 
-    // Рассчитываем актуальный статус тренировки.
     private static TrainingStatus GetActualStatus(
         Training training,
         DateTime moscowNow)
     {
-        // Отменённая тренировка не меняет статус.
         if (training.Status == TrainingStatus.Cancelled)
             return TrainingStatus.Cancelled;
 
-        // Дата тренировки хранится как UTC,
-        // но сама дата обозначает календарный день по Москве.
         var trainingDate = DateTime.SpecifyKind(
             training.Date.Date,
             DateTimeKind.Unspecified);
@@ -98,6 +102,10 @@ public class TrainingsController : ControllerBase
 
         return TrainingStatus.Completed;
     }
+
+    // ==============================
+    // GET TRAININGS
+    // ==============================
 
     [HttpGet]
     public async Task<IActionResult> GetTrainings(
@@ -128,8 +136,10 @@ public class TrainingsController : ControllerBase
             query = query.Where(t => t.Date <= to.Value);
 
         if (groupId.HasValue)
+        {
             query = query.Where(t =>
                 t.TrainingGroupId == groupId.Value);
+        }
 
         var isCoach = User.IsInRole("Coach");
 
@@ -189,6 +199,10 @@ public class TrainingsController : ControllerBase
         return Ok(result);
     }
 
+    // ==============================
+    // GET TRAINING BY ID
+    // ==============================
+
     [HttpGet("{id:int}")]
     public async Task<IActionResult> GetTraining(int id)
     {
@@ -221,13 +235,16 @@ public class TrainingsController : ControllerBase
                     GroupName = t.TrainingGroup != null
                         ? t.TrainingGroup.Name
                         : null,
+
                     Participants = t.Participants
-                        .OrderBy(p => p.Athlete.Surname)
+                        .OrderBy(p => p.AthleteProfile.Surname)
+                        .ThenBy(p => p.AthleteProfile.Name)
                         .Select(p => new
                         {
-                            p.AthleteId,
-                            p.Athlete.Name,
-                            p.Athlete.Surname,
+                            AthleteId = p.AthleteProfileId,
+                            p.AthleteProfileId,
+                            p.AthleteProfile.Name,
+                            p.AthleteProfile.Surname,
                             p.Status,
                             p.Note
                         })
@@ -320,6 +337,10 @@ public class TrainingsController : ControllerBase
         });
     }
 
+    // ==============================
+    // CREATE TRAINING
+    // ==============================
+
     [HttpPost]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> CreateTraining(
@@ -372,18 +393,19 @@ public class TrainingsController : ControllerBase
 
         if (training.TrainingGroupId.HasValue)
         {
-            var athleteIds = await _db.GroupMemberships
+            var athleteProfileIds = await _db.GroupMemberships
                 .Where(m =>
                     m.TrainingGroupId == training.TrainingGroupId.Value &&
-                    m.LeftDate == null)
-                .Select(m => m.AthleteId)
+                    m.LeftDate == null &&
+                    !m.AthleteProfile.IsArchived)
+                .Select(m => m.AthleteProfileId)
                 .ToListAsync();
 
-            var participants = athleteIds
-                .Select(athleteId => new TrainingParticipant
+            var participants = athleteProfileIds
+                .Select(athleteProfileId => new TrainingParticipant
                 {
                     TrainingId = training.TrainingId,
-                    AthleteId = athleteId,
+                    AthleteProfileId = athleteProfileId,
                     Status = AttendanceStatus.Unmarked
                 })
                 .ToList();
@@ -412,6 +434,10 @@ public class TrainingsController : ControllerBase
                 training.CreationTime
             });
     }
+
+    // ==============================
+    // UPDATE TRAINING
+    // ==============================
 
     [HttpPut("{id:int}")]
     [Authorize(Roles = "Coach")]
@@ -487,6 +513,10 @@ public class TrainingsController : ControllerBase
         });
     }
 
+    // ==============================
+    // CANCEL TRAINING
+    // ==============================
+
     [HttpPut("{id:int}/cancel")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> CancelTraining(int id)
@@ -537,6 +567,10 @@ public class TrainingsController : ControllerBase
         });
     }
 
+    // ==============================
+    // DELETE TRAINING
+    // ==============================
+
     [HttpDelete("{id:int}")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> DeleteTraining(int id)
@@ -555,7 +589,6 @@ public class TrainingsController : ControllerBase
             });
         }
 
-        // Тренер может удалить только собственную тренировку.
         if (training.CoachId != coachId)
             return Forbid();
 
@@ -572,17 +605,21 @@ public class TrainingsController : ControllerBase
         });
     }
 
+    // ==============================
+    // ATHLETE ATTENDANCE HISTORY
+    // ==============================
 
     [HttpGet("my-attendance")]
     [Authorize(Roles = "Athlete")]
     public async Task<IActionResult> GetMyAttendance()
     {
-        if (!TryGetCurrentUserId(out var athleteId))
+        if (!TryGetCurrentUserId(out var athleteUserId))
             return Unauthorized();
 
         var records = await _db.TrainingParticipants
             .AsNoTracking()
-            .Where(p => p.AthleteId == athleteId)
+            .Where(p =>
+                p.AthleteProfile.UserId == athleteUserId)
             .OrderByDescending(p => p.Training.Date)
             .ThenByDescending(p => p.Training.StartTime)
             .Select(p => new
@@ -633,6 +670,10 @@ public class TrainingsController : ControllerBase
         return Ok(result);
     }
 
+    // ==============================
+    // GET ATTENDANCE
+    // ==============================
+
     [HttpGet("{id:int}/attendance")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> GetAttendance(int id)
@@ -658,13 +699,14 @@ public class TrainingsController : ControllerBase
         var participants = await _db.TrainingParticipants
             .AsNoTracking()
             .Where(p => p.TrainingId == id)
-            .OrderBy(p => p.Athlete.Surname)
-            .ThenBy(p => p.Athlete.Name)
+            .OrderBy(p => p.AthleteProfile.Surname)
+            .ThenBy(p => p.AthleteProfile.Name)
             .Select(p => new
             {
-                p.AthleteId,
-                p.Athlete.Name,
-                p.Athlete.Surname,
+                AthleteId = p.AthleteProfileId,
+                p.AthleteProfileId,
+                p.AthleteProfile.Name,
+                p.AthleteProfile.Surname,
                 p.Status,
                 p.Note
             })
@@ -672,6 +714,10 @@ public class TrainingsController : ControllerBase
 
         return Ok(participants);
     }
+
+    // ==============================
+    // UPDATE ATTENDANCE
+    // ==============================
 
     [HttpPut("{id:int}/attendance/{athleteId:int}")]
     [Authorize(Roles = "Coach")]
@@ -708,7 +754,7 @@ public class TrainingsController : ControllerBase
         var participant = await _db.TrainingParticipants
             .FirstOrDefaultAsync(p =>
                 p.TrainingId == id &&
-                p.AthleteId == athleteId);
+                p.AthleteProfileId == athleteId);
 
         if (participant is null)
         {
@@ -727,7 +773,8 @@ public class TrainingsController : ControllerBase
         {
             message = "Attendance updated.",
             TrainingId = id,
-            AthleteId = athleteId,
+            AthleteId = participant.AthleteProfileId,
+            participant.AthleteProfileId,
             participant.Status,
             participant.Note
         });

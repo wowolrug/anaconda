@@ -162,7 +162,7 @@ namespace backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("AthleteNoteId"));
 
-                    b.Property<int>("AthleteId")
+                    b.Property<int>("AthleteProfileId")
                         .HasColumnType("integer");
 
                     b.Property<int>("AuthorUserId")
@@ -187,7 +187,7 @@ namespace backend.Migrations
 
                     b.HasKey("AthleteNoteId");
 
-                    b.HasIndex("AthleteId");
+                    b.HasIndex("AthleteProfileId");
 
                     b.HasIndex("AuthorUserId");
 
@@ -198,19 +198,46 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.AthleteProfile", b =>
                 {
-                    b.Property<int>("UserId")
+                    b.Property<int>("AthleteProfileId")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("AthleteProfileId"));
 
                     b.Property<string>("BeltColor")
                         .HasColumnType("text");
 
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("integer");
+
                     b.Property<int>("Gender")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsArchived")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Surname")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int?>("UserId")
                         .HasColumnType("integer");
 
                     b.Property<int>("WeightCategory")
                         .HasColumnType("integer");
 
-                    b.HasKey("UserId");
+                    b.HasKey("AthleteProfileId");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
                     b.ToTable("AthleteProfiles");
                 });
@@ -249,7 +276,7 @@ namespace backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("GroupMembershipId"));
 
-                    b.Property<int>("AthleteId")
+                    b.Property<int>("AthleteProfileId")
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("JoinedDate")
@@ -263,9 +290,9 @@ namespace backend.Migrations
 
                     b.HasKey("GroupMembershipId");
 
-                    b.HasIndex("AthleteId");
+                    b.HasIndex("AthleteProfileId");
 
-                    b.HasIndex("TrainingGroupId", "AthleteId")
+                    b.HasIndex("TrainingGroupId", "AthleteProfileId")
                         .IsUnique()
                         .HasFilter("\"LeftDate\" IS NULL");
 
@@ -315,20 +342,17 @@ namespace backend.Migrations
                     b.Property<int>("ParentId")
                         .HasColumnType("integer");
 
-                    b.Property<int>("AthleteId")
+                    b.Property<int>("AthleteProfileId")
                         .HasColumnType("integer");
 
                     b.Property<DateTime>("LinkedDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.HasKey("ParentId", "AthleteId");
+                    b.HasKey("ParentId", "AthleteProfileId");
 
-                    b.HasIndex("AthleteId");
+                    b.HasIndex("AthleteProfileId");
 
-                    b.ToTable("ParentAthletes", t =>
-                        {
-                            t.HasCheckConstraint("CK_ParentAthlete_NotSelf", "\"ParentId\" <> \"AthleteId\"");
-                        });
+                    b.ToTable("ParentAthletes");
                 });
 
             modelBuilder.Entity("backend.Models.PhysicalMeasurement", b =>
@@ -339,7 +363,7 @@ namespace backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("PhysicalMeasurementId"));
 
-                    b.Property<int>("AthleteId")
+                    b.Property<int>("AthleteProfileId")
                         .HasColumnType("integer");
 
                     b.Property<int?>("GroupMetricId")
@@ -367,9 +391,9 @@ namespace backend.Migrations
 
                     b.HasIndex("RecordedByUserId");
 
-                    b.HasIndex("AthleteId", "GroupMetricId", "MeasuredAt");
+                    b.HasIndex("AthleteProfileId", "GroupMetricId", "MeasuredAt");
 
-                    b.HasIndex("AthleteId", "Type", "MeasuredAt");
+                    b.HasIndex("AthleteProfileId", "Type", "MeasuredAt");
 
                     b.ToTable("PhysicalMeasurements");
                 });
@@ -459,7 +483,7 @@ namespace backend.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TrainingParticipantId"));
 
-                    b.Property<int>("AthleteId")
+                    b.Property<int>("AthleteProfileId")
                         .HasColumnType("integer");
 
                     b.Property<string>("Note")
@@ -473,9 +497,9 @@ namespace backend.Migrations
 
                     b.HasKey("TrainingParticipantId");
 
-                    b.HasIndex("AthleteId");
+                    b.HasIndex("AthleteProfileId");
 
-                    b.HasIndex("TrainingId", "AthleteId")
+                    b.HasIndex("TrainingId", "AthleteProfileId")
                         .IsUnique();
 
                     b.ToTable("TrainingParticipants");
@@ -614,9 +638,9 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.AthleteNote", b =>
                 {
-                    b.HasOne("backend.Models.User", "Athlete")
-                        .WithMany("AthleteNotes")
-                        .HasForeignKey("AthleteId")
+                    b.HasOne("backend.Models.AthleteProfile", "AthleteProfile")
+                        .WithMany("Notes")
+                        .HasForeignKey("AthleteProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -631,7 +655,7 @@ namespace backend.Migrations
                         .HasForeignKey("TrainingId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.Navigation("Athlete");
+                    b.Navigation("AthleteProfile");
 
                     b.Navigation("Author");
 
@@ -640,20 +664,26 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.AthleteProfile", b =>
                 {
+                    b.HasOne("backend.Models.User", "CreatedBy")
+                        .WithMany("CreatedAthleteProfiles")
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("backend.Models.User", "User")
                         .WithOne("AthleteProfile")
                         .HasForeignKey("backend.Models.AthleteProfile", "UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CreatedBy");
 
                     b.Navigation("User");
                 });
 
             modelBuilder.Entity("backend.Models.GroupMembership", b =>
                 {
-                    b.HasOne("backend.Models.User", "Athlete")
+                    b.HasOne("backend.Models.AthleteProfile", "AthleteProfile")
                         .WithMany("GroupMemberships")
-                        .HasForeignKey("AthleteId")
+                        .HasForeignKey("AthleteProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -663,7 +693,7 @@ namespace backend.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Athlete");
+                    b.Navigation("AthleteProfile");
 
                     b.Navigation("TrainingGroup");
                 });
@@ -681,9 +711,9 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.ParentAthlete", b =>
                 {
-                    b.HasOne("backend.Models.User", "Athlete")
+                    b.HasOne("backend.Models.AthleteProfile", "AthleteProfile")
                         .WithMany("Parents")
-                        .HasForeignKey("AthleteId")
+                        .HasForeignKey("AthleteProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -693,16 +723,16 @@ namespace backend.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.Navigation("Athlete");
+                    b.Navigation("AthleteProfile");
 
                     b.Navigation("Parent");
                 });
 
             modelBuilder.Entity("backend.Models.PhysicalMeasurement", b =>
                 {
-                    b.HasOne("backend.Models.User", "Athlete")
+                    b.HasOne("backend.Models.AthleteProfile", "AthleteProfile")
                         .WithMany("Measurements")
-                        .HasForeignKey("AthleteId")
+                        .HasForeignKey("AthleteProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -717,7 +747,7 @@ namespace backend.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.Navigation("Athlete");
+                    b.Navigation("AthleteProfile");
 
                     b.Navigation("GroupMetric");
 
@@ -755,9 +785,9 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.TrainingParticipant", b =>
                 {
-                    b.HasOne("backend.Models.User", "Athlete")
+                    b.HasOne("backend.Models.AthleteProfile", "AthleteProfile")
                         .WithMany("TrainingParticipations")
-                        .HasForeignKey("AthleteId")
+                        .HasForeignKey("AthleteProfileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
@@ -767,9 +797,22 @@ namespace backend.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Athlete");
+                    b.Navigation("AthleteProfile");
 
                     b.Navigation("Training");
+                });
+
+            modelBuilder.Entity("backend.Models.AthleteProfile", b =>
+                {
+                    b.Navigation("GroupMemberships");
+
+                    b.Navigation("Measurements");
+
+                    b.Navigation("Notes");
+
+                    b.Navigation("Parents");
+
+                    b.Navigation("TrainingParticipations");
                 });
 
             modelBuilder.Entity("backend.Models.GroupMetric", b =>
@@ -795,23 +838,15 @@ namespace backend.Migrations
 
             modelBuilder.Entity("backend.Models.User", b =>
                 {
-                    b.Navigation("AthleteNotes");
-
                     b.Navigation("AthleteProfile");
 
                     b.Navigation("Children");
 
                     b.Navigation("CoachedTrainings");
 
-                    b.Navigation("GroupMemberships");
-
-                    b.Navigation("Measurements");
-
-                    b.Navigation("Parents");
+                    b.Navigation("CreatedAthleteProfiles");
 
                     b.Navigation("RecordedMeasurements");
-
-                    b.Navigation("TrainingParticipations");
 
                     b.Navigation("WrittenNotes");
                 });

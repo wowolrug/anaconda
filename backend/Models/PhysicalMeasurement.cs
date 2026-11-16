@@ -1,10 +1,11 @@
+
 namespace backend.Models;
 
 public class PhysicalMeasurement
 {
     public int PhysicalMeasurementId { get; set; }
 
-    public int AthleteId { get; set; }
+    public int AthleteProfileId { get; set; }
 
     public int RecordedByUserId { get; set; }
 
@@ -21,7 +22,7 @@ public class PhysicalMeasurement
 
     public string? Note { get; set; }
 
-    public User Athlete { get; set; } = null!;
+    public AthleteProfile AthleteProfile { get; set; } = null!;
 
     public User RecordedByUser { get; set; } = null!;
 

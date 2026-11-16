@@ -36,8 +36,6 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterDto dto)
     {
-        // Публичная регистрация разрешена только спортсменам
-        // и родителям. Тренеры регистрируются отдельно по коду.
         if (dto.Role != "Athlete" && dto.Role != "Parent")
         {
             return BadRequest(new
@@ -47,6 +45,8 @@ public class AuthController : ControllerBase
         }
 
         var email = dto.Email.Trim();
+        var name = dto.Name.Trim();
+        var surname = dto.Surname.Trim();
 
         var existingUser = await _userManager.FindByEmailAsync(email);
 
@@ -62,8 +62,11 @@ public class AuthController : ControllerBase
         {
             UserName = email,
             Email = email,
-            Name = dto.Name.Trim(),
-            Surname = dto.Surname.Trim()
+            Name = name,
+            Surname = surname,
+            PhoneNumber = string.IsNullOrWhiteSpace(dto.PhoneNumber)
+                ? null
+                : dto.PhoneNumber.Trim()
         };
 
         var createResult = await _userManager.CreateAsync(
@@ -92,23 +95,93 @@ public class AuthController : ControllerBase
             });
         }
 
+        int? athleteProfileId = null;
+        var profileLinked = false;
+        var profileLinkStatus = (string?)null;
+
+        if (dto.Role == "Athlete")
+        {
+            try
+            {
+                var normalizedName = name.ToLower();
+                var normalizedSurname = surname.ToLower();
+
+                // Ищем свободные профили с совпадающими именем и фамилией.
+                // Берём максимум два, чтобы определить неоднозначность.
+                var matchingProfiles = await _db.AthleteProfiles
+                    .Where(x =>
+                        x.UserId == null &&
+                        x.Name.Trim().ToLower() == normalizedName &&
+                        x.Surname.Trim().ToLower() == normalizedSurname)
+                    .Take(2)
+                    .ToListAsync();
+
+                if (matchingProfiles.Count == 1)
+                {
+                    // Найден ровно один профиль — привязываем аккаунт к нему.
+                    var existingProfile = matchingProfiles[0];
+
+                    existingProfile.UserId = user.Id;
+
+                    athleteProfileId = existingProfile.AthleteProfileId;
+                    profileLinked = true;
+                    profileLinkStatus = "existing_profile_linked";
+                }
+                else
+                {
+                    // Нет совпадений или их несколько — создаём новый профиль.
+                    var profile = new AthleteProfile
+                    {
+                        UserId = user.Id,
+                        Name = name,
+                        Surname = surname
+                    };
+
+                    _db.AthleteProfiles.Add(profile);
+
+                    profileLinkStatus = matchingProfiles.Count == 0
+                        ? "new_profile_created"
+                        : "multiple_matches";
+                }
+
+                await _db.SaveChangesAsync();
+
+                if (athleteProfileId == null)
+                {
+                    var createdProfile = await _db.AthleteProfiles
+                        .FirstOrDefaultAsync(x => x.UserId == user.Id);
+
+                    athleteProfileId = createdProfile?.AthleteProfileId;
+                }
+            }
+            catch
+            {
+                await _userManager.DeleteAsync(user);
+
+                return StatusCode(500, new
+                {
+                    message = "Could not create or link the athlete profile."
+                });
+            }
+        }
+
         return Ok(new
         {
             message = "Registration successful.",
-            userId = user.Id
+            userId = user.Id,
+            athleteProfileId,
+            profileLinked,
+            profileLinkStatus
         });
     }
 
     [HttpPost("register-coach")]
     public async Task<IActionResult> RegisterCoach(CoachRegisterDto dto)
     {
-        // Получаем настройки регистрации.
         var settings = await _db.CoachRegistrationSettings
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == 1);
 
-        // Регистрация невозможна, если она выключена
-        // или действующий код ещё не установлен.
         if (settings is null ||
             !settings.IsRegistrationEnabled ||
             string.IsNullOrWhiteSpace(settings.InvitationCodeHash))
@@ -119,7 +192,6 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Проверяем введённый код по сохранённому хешу.
         var verificationResult = _invitationCodeHasher.VerifyHashedPassword(
             settings,
             settings.InvitationCodeHash,
@@ -145,13 +217,15 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Создаём пользователя.
         var user = new User
         {
             UserName = email,
             Email = email,
             Name = dto.Name.Trim(),
-            Surname = dto.Surname.Trim()
+            Surname = dto.Surname.Trim(),
+            PhoneNumber = string.IsNullOrWhiteSpace(dto.PhoneNumber)
+                ? null
+                : dto.PhoneNumber.Trim()
         };
 
         var createResult = await _userManager.CreateAsync(
@@ -166,7 +240,6 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Назначаем только роль Coach.
         var roleResult = await _userManager.AddToRoleAsync(
             user,
             "Coach");
@@ -225,7 +298,6 @@ public class AuthController : ControllerBase
 
         var isMainCoach = roles.Contains("MainCoach");
 
-        // Главный тренер получает все обычные возможности тренера.
         var jwtRoles = roles.ToList();
 
         if (isMainCoach && !jwtRoles.Contains("Coach"))
