@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { api } from '@/api/client';
-import { restoreSession } from '@/api/auth';
+import { getCurrentRole, restoreSession, subscribeRole } from '@/api/auth';
 
 // Измерения спортсмена
 type Measurement = {
@@ -30,6 +30,19 @@ type Measurement = {
   note: string | null;
   recordedByUserId?: number;
   recordedByName?: string;
+};
+
+
+// Личные данные спортсмена
+type AthleteProfile = {
+  athleteProfileId: number;
+  name: string;
+  surname: string;
+  gender: number;
+  dateOfBirth: string | null;
+  age: number | null;
+  beltColor: string | null;
+  weightCategory: number;
 };
 
 // Группа спортсменов
@@ -112,6 +125,35 @@ function formatNoteDate(value: string) {
   });
 }
 
+
+function calculateAge(dateOfBirth: string | null | undefined) {
+  if (!dateOfBirth) return null;
+
+  const [year, month, day] = dateOfBirth.slice(0, 10).split('-').map(Number);
+  if (!year || !month || !day) return null;
+
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const birthdayHasPassed =
+    today.getMonth() + 1 > month ||
+    (today.getMonth() + 1 === month && today.getDate() >= day);
+
+  if (!birthdayHasPassed) age--;
+  return age >= 0 ? age : null;
+}
+
+function getMeasurementTypeNumber(type: number | string | null) {
+  if (typeof type === 'number' || /^\d+$/.test(String(type))) {
+    return Number(type);
+  }
+
+  const normalized = String(type ?? '').toLowerCase();
+  if (normalized === 'weight') return 0;
+  if (normalized === 'height') return 1;
+  if (normalized === 'armspan') return 2;
+  return -1;
+}
+
 function getNoteType(type: number | string) {
   const types: Record<number, string> = {
     0: 'Тренер',
@@ -132,19 +174,49 @@ function getNoteType(type: number | string) {
   return names[normalized] ?? 'Заметка';
 }
 
-function isValidDate(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return false;
-  }
+function formatBirthDateForInput(value: string | null | undefined) {
+  if (!value) return '';
 
-  const [year, month, day] = value.split('-').map(Number);
+  const [year, month, day] = value.slice(0, 10).split('-');
+  if (!year || !month || !day) return '';
+
+  return `${day}.${month}.${year}`;
+}
+
+
+function isValidDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
+function parseBirthDateInput(value: string) {
+  const match = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
   const date = new Date(year, month - 1, day);
 
-  return (
-    date.getFullYear() === year &&
-    date.getMonth() === month - 1 &&
-    date.getDate() === day
-  );
+  if (
+    year < 1900 ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (date > today) return null;
+
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 export default function AthleteDetailsScreen() {
@@ -170,6 +242,22 @@ export default function AthleteDetailsScreen() {
 
   const athleteName =
     `${name ?? ''} ${surname ?? ''}`.trim() || 'Спортсмен';
+
+
+  // Личные данные спортсмена и права текущего пользователя
+  const [athleteProfile, setAthleteProfile] = useState<AthleteProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [savingBirthDate, setSavingBirthDate] = useState(false);
+  const [dateOfBirthInput, setDateOfBirthInput] = useState('');
+  const [basicDataExpanded, setBasicDataExpanded] = useState(false);
+  const [groupMetricsExpanded, setGroupMetricsExpanded] = useState(false);
+  const [role, setRole] = useState<string | null>(getCurrentRole);
+  const isCoach = role?.toLowerCase() === 'coach' || role?.toLowerCase() === 'maincoach';
+
+  const [weightInput, setWeightInput] = useState('');
+  const [heightInput, setHeightInput] = useState('');
+  const [savingPhysicalType, setSavingPhysicalType] = useState<0 | 1 | null>(null);
 
   // Измерения
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
@@ -203,6 +291,37 @@ export default function AthleteDetailsScreen() {
     number | null
   >(null);
   const [deletingNoteId, setDeletingNoteId] = useState<number | null>(null);
+
+
+  // Загрузка личных данных спортсмена
+  const loadAthleteProfile = useCallback(async () => {
+    if (!athleteId || !/^\d+$/.test(athleteId)) {
+      setProfileError('Не указан корректный ID спортсмена.');
+      setProfileLoading(false);
+      return;
+    }
+
+    try {
+      setProfileLoading(true);
+      setProfileError(null);
+      await restoreSession();
+
+      const response = await api.get<AthleteProfile>(`/AthleteProfiles/${athleteId}`);
+      setAthleteProfile(response.data);
+      setDateOfBirthInput(formatBirthDateForInput(response.data.dateOfBirth));
+    } catch (err: any) {
+      const status = err?.response?.status;
+      setProfileError(
+        status === 401
+          ? 'Сессия истекла. Войди в аккаунт заново.'
+          : status === 404
+            ? 'Профиль спортсмена не найден.'
+            : 'Не удалось загрузить личные данные спортсмена.',
+      );
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [athleteId]);
 
   // Загрузка всех измерений спортсмена
   const loadMeasurements = useCallback(async () => {
@@ -382,6 +501,28 @@ export default function AthleteDetailsScreen() {
   }, [athleteId]);
 
   useEffect(() => {
+    void loadAthleteProfile();
+  }, [loadAthleteProfile]);
+
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = subscribeRole((nextRole) => {
+      if (active) setRole(nextRole);
+    });
+
+    void restoreSession().then(() => {
+      if (active) setRole(getCurrentRole());
+    }).catch(() => {
+      if (active) setRole(null);
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     void loadMeasurements();
   }, [loadMeasurements]);
 
@@ -392,6 +533,20 @@ export default function AthleteDetailsScreen() {
   useEffect(() => {
     void loadNotes();
   }, [loadNotes]);
+
+  const latestWeight = useMemo(
+    () => measurements
+      .filter((item) => getMeasurementTypeNumber(item.type) === 0)
+      .sort((a, b) => new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime())[0],
+    [measurements],
+  );
+
+  const latestHeight = useMemo(
+    () => measurements
+      .filter((item) => getMeasurementTypeNumber(item.type) === 1)
+      .sort((a, b) => new Date(b.measuredAt).getTime() - new Date(a.measuredAt).getTime())[0],
+    [measurements],
+  );
 
   // Выбранная метрика
   const selectedMetric = useMemo(
@@ -496,6 +651,100 @@ export default function AthleteDetailsScreen() {
       };
     });
   }, [chartData, chartStats, chartPlotWidth]);
+
+
+  async function saveDateOfBirth() {
+    if (!isCoach || savingBirthDate || !athleteProfile) return;
+
+    const enteredDate = dateOfBirthInput.trim();
+    const normalizedDate = enteredDate ? parseBirthDateInput(enteredDate) : null;
+
+    if (enteredDate && !normalizedDate) {
+      Alert.alert(
+        'Проверь дату',
+        'Введи существующую дату в формате ДД.ММ.ГГГГ. Например, 05.09.2012.',
+      );
+      return;
+    }
+
+    try {
+      setSavingBirthDate(true);
+      await restoreSession();
+
+      const response = await api.put<AthleteProfile>(`/AthleteProfiles/${athleteId}`, {
+        name: athleteProfile.name,
+        surname: athleteProfile.surname,
+        gender: athleteProfile.gender,
+        // Передаём UTC, чтобы PostgreSQL timestamp with time zone не получил Unspecified.
+        dateOfBirth: normalizedDate ? `${normalizedDate}T00:00:00Z` : null,
+        beltColor: athleteProfile.beltColor,
+        weightCategory: athleteProfile.weightCategory,
+      });
+
+      setAthleteProfile((current) => current ? { ...current, dateOfBirth: response.data.dateOfBirth } : current);
+      setDateOfBirthInput(formatBirthDateForInput(response.data.dateOfBirth));
+      Alert.alert('Сохранено', 'Дата рождения спортсмена обновлена.');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const serverMessage = err?.response?.data?.message;
+      Alert.alert(
+        'Ошибка сохранения',
+        status === 401
+          ? 'Сессия истекла. Войди в аккаунт заново.'
+          : status === 403
+            ? 'Изменять личные данные может только тренер.'
+            : status === 404
+              ? 'Спортсмен не найден или не состоит в твоей группе.'
+              : serverMessage ?? 'Не удалось сохранить дату рождения.',
+      );
+    } finally {
+      setSavingBirthDate(false);
+    }
+  }
+
+  async function saveBasicMeasurement(type: 0 | 1) {
+    if (!isCoach || savingPhysicalType !== null) return;
+
+    const rawValue = type === 0 ? weightInput : heightInput;
+    const parsedValue = Number(rawValue.trim().replace(',', '.'));
+
+    if (!rawValue.trim() || !Number.isFinite(parsedValue) || parsedValue <= 0) {
+      Alert.alert('Проверь значение', 'Введи число больше нуля.');
+      return;
+    }
+
+    try {
+      setSavingPhysicalType(type);
+      await restoreSession();
+      await api.post(`/PhysicalMeasurements/athlete/${athleteId}`, {
+        type,
+        value: parsedValue,
+        measuredAt: `${getTodayValue()}T00:00:00Z`,
+        note: null,
+      });
+
+      if (type === 0) setWeightInput('');
+      else setHeightInput('');
+
+      await loadMeasurements();
+      Alert.alert('Сохранено', type === 0 ? 'Вес добавлен в историю.' : 'Рост добавлен в историю.');
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const serverMessage = err?.response?.data?.message;
+      Alert.alert(
+        'Ошибка сохранения',
+        status === 401
+          ? 'Сессия истекла. Войди в аккаунт заново.'
+          : status === 403
+            ? 'Добавлять измерения может только тренер.'
+            : status === 404
+              ? 'Спортсмен не найден или не состоит в твоей группе.'
+              : serverMessage ?? 'Не удалось сохранить измерение.',
+      );
+    } finally {
+      setSavingPhysicalType(null);
+    }
+  }
 
   // Сохранение измерения пользовательской метрики
   async function saveGroupMetricMeasurement() {
@@ -980,19 +1229,188 @@ export default function AthleteDetailsScreen() {
               </View>
             </View>
 
-            {/* Метрики групп */}
+
+
+            {/* Основные данные — сворачиваемый блок */}
+            <View style={styles.basicSection}>
+              <Pressable
+                style={styles.basicSectionHeader}
+                onPress={() => setBasicDataExpanded((current) => !current)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: basicDataExpanded }}
+              >
+                <View style={styles.basicSectionHeaderText}>
+                  <Text style={styles.sectionTitle}>Основные данные</Text>
+                  <Text style={styles.basicSectionHint}>
+                    Возраст, вес и рост спортсмена
+                  </Text>
+                </View>
+                <Text style={styles.accordionIcon}>
+                  {basicDataExpanded ? '⌃' : '⌄'}
+                </Text>
+              </Pressable>
+
+              {basicDataExpanded && (
+                profileLoading ? (
+                  <View style={styles.emptyCard}>
+                    <ActivityIndicator color="#2563EB" />
+                    <Text style={[styles.emptyText, { marginTop: 10 }]}>
+                      Загружаем данные профиля...
+                    </Text>
+                  </View>
+                ) : profileError || !athleteProfile ? (
+                  <View style={styles.emptyCard}>
+                    <Text style={styles.error}>
+                      {profileError ?? 'Данные профиля недоступны.'}
+                    </Text>
+                    <Pressable
+                      style={styles.retryButton}
+                      onPress={() => void loadAthleteProfile()}
+                    >
+                      <Text style={styles.retryButtonText}>Повторить</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={styles.card}>
+                    <View style={styles.basicValueRow}>
+                      <View style={styles.basicValueBlock}>
+                        <Text style={styles.basicValueLabel}>Возраст</Text>
+                        <Text style={styles.basicValue}>
+                          {calculateAge(athleteProfile.dateOfBirth) === null
+                            ? '—'
+                            : `${calculateAge(athleteProfile.dateOfBirth)} лет`}
+                        </Text>
+                      </View>
+                      <View style={styles.basicValueBlock}>
+                        <Text style={styles.basicValueLabel}>Вес</Text>
+                        <Text style={styles.basicValue}>
+                          {latestWeight
+                            ? `${Number(latestWeight.value).toLocaleString('ru-RU')} кг`
+                            : '—'}
+                        </Text>
+                      </View>
+                      <View style={styles.basicValueBlock}>
+                        <Text style={styles.basicValueLabel}>Рост</Text>
+                        <Text style={styles.basicValue}>
+                          {latestHeight
+                            ? `${Number(latestHeight.value).toLocaleString('ru-RU')} см`
+                            : '—'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {isCoach && (
+                      <>
+                        <Text style={styles.label}>Дата рождения</Text>
+                        <TextInput
+                          style={[styles.input, styles.birthDateInput]}
+                          value={dateOfBirthInput}
+                          onChangeText={(value) =>
+                            setDateOfBirthInput(value.replace(/[^0-9.]/g, '').slice(0, 10))
+                          }
+                          placeholder="ДД.ММ.ГГГГ"
+                          placeholderTextColor="#9CA3AF"
+                          keyboardType="default"
+                          maxLength={10}
+                          autoCorrect={false}
+                          autoCapitalize="none"
+                          editable={!savingBirthDate}
+                        />
+                        <Text style={styles.dateInputHint}>
+                          Введите день, месяц и год. Например: 05.09.2012
+                        </Text>
+                        <Pressable
+                          style={[
+                            styles.saveButton,
+                            savingBirthDate && styles.saveButtonDisabled,
+                          ]}
+                          onPress={() => void saveDateOfBirth()}
+                          disabled={savingBirthDate}
+                        >
+                          {savingBirthDate ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.saveButtonText}>
+                              Сохранить дату рождения
+                            </Text>
+                          )}
+                        </Pressable>
+
+                        <Text style={styles.label}>Добавить вес (кг)</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={weightInput}
+                          onChangeText={setWeightInput}
+                          placeholder="Например, 72.5"
+                          keyboardType="decimal-pad"
+                          editable={savingPhysicalType === null}
+                        />
+                        <Pressable
+                          style={[
+                            styles.saveButton,
+                            savingPhysicalType !== null && styles.saveButtonDisabled,
+                          ]}
+                          onPress={() => void saveBasicMeasurement(0)}
+                          disabled={savingPhysicalType !== null}
+                        >
+                          {savingPhysicalType === 0 ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.saveButtonText}>Сохранить вес</Text>
+                          )}
+                        </Pressable>
+
+                        <Text style={styles.label}>Добавить рост (см)</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={heightInput}
+                          onChangeText={setHeightInput}
+                          placeholder="Например, 178"
+                          keyboardType="decimal-pad"
+                          editable={savingPhysicalType === null}
+                        />
+                        <Pressable
+                          style={[
+                            styles.saveButton,
+                            savingPhysicalType !== null && styles.saveButtonDisabled,
+                          ]}
+                          onPress={() => void saveBasicMeasurement(1)}
+                          disabled={savingPhysicalType !== null}
+                        >
+                          {savingPhysicalType === 1 ? (
+                            <ActivityIndicator color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.saveButtonText}>Сохранить рост</Text>
+                          )}
+                        </Pressable>
+                      </>
+                    )}
+                  </View>
+                )
+              )}
+            </View>
+
+            {/* Физические показатели — сворачиваемый блок */}
             <View style={styles.metricsSection}>
-              <View style={styles.metricsHeader}>
-                <Text style={styles.sectionTitle}>
-                  Физические показатели
+              <Pressable
+                style={styles.metricsAccordionHeader}
+                onPress={() => setGroupMetricsExpanded((current) => !current)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: groupMetricsExpanded }}
+              >
+                <View style={styles.basicSectionHeaderText}>
+                  <Text style={styles.sectionTitle}>Физические показатели</Text>
+                  <Text style={styles.basicSectionHint}>
+                    {groupMetrics.length} показателей группы
+                  </Text>
+                </View>
+                <Text style={styles.metricsCount}>{groupMetrics.length}</Text>
+                <Text style={styles.accordionIcon}>
+                  {groupMetricsExpanded ? '⌃' : '⌄'}
                 </Text>
+              </Pressable>
 
-                <Text style={styles.metricsCount}>
-                  {groupMetrics.length}
-                </Text>
-              </View>
-
-              {metricsLoading ? (
+              {groupMetricsExpanded && (metricsLoading ? (
                 <View style={styles.emptyCard}>
                   <ActivityIndicator color="#2563EB" />
                   <Text style={[styles.emptyText, { marginTop: 10 }]}>
@@ -1265,7 +1683,7 @@ export default function AthleteDetailsScreen() {
                     </>
                   )}
                 </>
-              )}
+              ))}
             </View>
 
             {/* Заметки спортсмена */}
@@ -1530,6 +1948,75 @@ const styles = StyleSheet.create({
     marginTop: 5,
     fontSize: 13,
     color: '#6B7280',
+  },
+  basicSection: {
+    marginTop: 24,
+  },
+  basicSectionHeader: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+  },
+  basicSectionHeaderText: {
+    flex: 1,
+  },
+  basicSectionHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
+  accordionIcon: {
+    marginLeft: 12,
+    fontSize: 25,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  dateInputHint: {
+    marginTop: 7,
+    marginBottom: 10,
+    fontSize: 12,
+    lineHeight: 17,
+    color: '#6B7280',
+  },
+  birthDateInput: {
+    letterSpacing: 1.2,
+    fontVariant: ['tabular-nums'],
+  },
+  metricsAccordionHeader: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+  },
+  basicValueRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F1F4',
+  },
+  basicValueBlock: {
+    flex: 1,
+  },
+  basicValueLabel: {
+    fontSize: 11,
+    color: '#9CA3AF',
+  },
+  basicValue: {
+    marginTop: 6,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
   },
   metricsSection: {
     marginTop: 26,

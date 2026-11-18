@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -46,8 +45,66 @@ function getCountLabel(count: number) {
   return 'спортсменов';
 }
 
+// Единый формат отображения: Фамилия Имя
+function getAthleteFullName(athlete: Athlete) {
+  return `${athlete.surname} ${athlete.name}`.trim();
+}
+
+// Сортировка: сначала фамилия, затем имя
+function sortAthletes(athletes: Athlete[]) {
+  return [...athletes].sort((a, b) => {
+    const surnameCompare = a.surname.localeCompare(
+      b.surname,
+      'ru',
+      { sensitivity: 'base' },
+    );
+
+    if (surnameCompare !== 0) return surnameCompare;
+
+    return a.name.localeCompare(
+      b.name,
+      'ru',
+      { sensitivity: 'base' },
+    );
+  });
+}
+
 function getInitials(athlete: Athlete) {
-  return `${athlete.name.charAt(0)}${athlete.surname.charAt(0)}`.toUpperCase();
+  return `${athlete.surname.charAt(0)}${athlete.name.charAt(0)}`.toUpperCase();
+}
+
+// Поиск одновременно по имени, фамилии и полному ФИО
+function filterAthletes(athletes: Athlete[], query: string) {
+  const normalizedQuery = query
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/\s+/g, ' ');
+
+  if (!normalizedQuery) return athletes;
+
+  const searchParts = normalizedQuery.split(' ');
+
+  return athletes.filter((athlete) => {
+    const surname = athlete.surname.toLocaleLowerCase();
+    const name = athlete.name.toLocaleLowerCase();
+    const fullName = `${surname} ${name}`.toLocaleLowerCase();
+    const reverseFullName = `${name} ${surname}`.toLocaleLowerCase();
+    const email = (athlete.email ?? '').toLocaleLowerCase();
+
+    return (
+      fullName.includes(normalizedQuery) ||
+      reverseFullName.includes(normalizedQuery) ||
+      surname.includes(normalizedQuery) ||
+      name.includes(normalizedQuery) ||
+      email.includes(normalizedQuery) ||
+      searchParts.every(
+        (part) =>
+          surname.includes(part) ||
+          name.includes(part) ||
+          email.includes(part),
+      )
+    );
+  });
 }
 
 export default function AthletesScreen() {
@@ -77,6 +134,10 @@ export default function AthletesScreen() {
   const [addingAthleteId, setAddingAthleteId] = useState<number | null>(null);
   const [removingAthleteId, setRemovingAthleteId] = useState<number | null>(null);
 
+  // Поиск спортсменов
+  const [athleteSearch, setAthleteSearch] = useState('');
+  const [availableAthleteSearch, setAvailableAthleteSearch] = useState('');
+
   const [archivedGroupsExpanded, setArchivedGroupsExpanded] = useState(false);
   const [archivedAthletesExpanded, setArchivedAthletesExpanded] = useState(false);
   const [loadingArchivedGroups, setLoadingArchivedGroups] = useState(false);
@@ -96,6 +157,18 @@ export default function AthletesScreen() {
   const [newAthleteName, setNewAthleteName] = useState('');
   const [newAthleteSurname, setNewAthleteSurname] = useState('');
   const [newAthleteGender, setNewAthleteGender] = useState(0);
+
+  // Все отображаемые списки спортсменов сортируются по фамилии и имени.
+  const filteredAthletes = sortAthletes(
+    filterAthletes(allAthletes, athleteSearch),
+  );
+
+  const filteredAvailableAthletes = sortAthletes(
+    filterAthletes(availableAthletes, availableAthleteSearch),
+  );
+
+  const sortedGroupAthletes = sortAthletes(groupAthletes);
+  const sortedArchivedAthletes = sortAthletes(archivedAthletes);
 
   function openAthlete(athlete: Athlete) {
     router.push({
@@ -284,7 +357,7 @@ export default function AthletesScreen() {
     const surname = newAthleteSurname.trim();
 
     if (!name || !surname) {
-      Alert.alert('Заполни данные', 'Укажи имя и фамилию спортсмена.');
+      Alert.alert('Заполни данные', 'Укажи фамилию и имя спортсмена.');
       return;
     }
 
@@ -310,7 +383,7 @@ export default function AthletesScreen() {
 
       Alert.alert(
         'Спортсмен создан',
-        `${name} ${surname} добавлен в список. Аккаунт для него не создавался.`,
+        `${surname} ${name} добавлен(а) в список. Аккаунт для него не создавался.`,
       );
     } catch (err: any) {
       const status = err?.response?.status;
@@ -353,6 +426,7 @@ export default function AthletesScreen() {
   async function openAddModal(group: TrainingGroup) {
     setAddToGroup(group);
     setAvailableAthletes([]);
+    setAvailableAthleteSearch('');
     setLoadingAvailable(true);
 
     try {
@@ -389,10 +463,11 @@ export default function AthletesScreen() {
 
       setAddToGroup(null);
       setAvailableAthletes([]);
+      setAvailableAthleteSearch('');
 
       Alert.alert(
         'Готово',
-        `${athlete.name} ${athlete.surname} добавлен(а) в группу «${group.name}».`,
+        `${getAthleteFullName(athlete)} добавлен(а) в группу «${group.name}».`,
       );
     } catch (err: any) {
       const status = err?.response?.status;
@@ -427,7 +502,7 @@ export default function AthletesScreen() {
 
       Alert.alert(
         'Готово',
-        `${athlete.name} ${athlete.surname} исключён(а) из группы.`,
+        `${getAthleteFullName(athlete)} исключён(а) из группы.`,
       );
     } catch {
       Alert.alert('Ошибка', 'Не удалось исключить спортсмена из группы.');
@@ -442,7 +517,7 @@ export default function AthletesScreen() {
 
     Alert.alert(
       'Исключить из группы?',
-      `${athlete.name} ${athlete.surname} будет исключён(а) из группы «${group.name}». Аккаунт спортсмена останется в системе.`,
+      `${getAthleteFullName(athlete)} будет исключён(а) из группы «${group.name}». Аккаунт спортсмена останется в системе.`,
       [
         { text: 'Отмена', style: 'cancel' },
         {
@@ -521,7 +596,7 @@ export default function AthletesScreen() {
 
       Alert.alert(
         'Спортсмен архивирован',
-        `${athlete.name} ${athlete.surname} больше не сможет войти в систему. Его история сохранена.`,
+        `${getAthleteFullName(athlete)} больше не сможет войти в систему. Его история сохранена.`,
       );
     } catch (err: any) {
       Alert.alert(
@@ -537,7 +612,7 @@ export default function AthletesScreen() {
   function confirmArchiveAthlete(athlete: Athlete) {
     Alert.alert(
       'Архивировать спортсмена?',
-      `Аккаунт ${athlete.name} ${athlete.surname} будет отключён. Он будет исключён из активных групп, но история тренировок и показатели сохранятся. Операцию можно отменить восстановлением из архива.`,
+      `Аккаунт ${getAthleteFullName(athlete)} будет отключён. Он будет исключён из активных групп, но история тренировок и показатели сохранятся. Операцию можно отменить восстановлением из архива.`,
       [
         { text: 'Отмена', style: 'cancel' },
         {
@@ -590,7 +665,7 @@ export default function AthletesScreen() {
 
       Alert.alert(
         'Спортсмен восстановлен',
-        `${athlete.name} ${athlete.surname} снова может пользоваться системой.`,
+        `${getAthleteFullName(athlete)} снова может пользоваться системой.`,
       );
     } catch (err: any) {
       Alert.alert(
@@ -619,6 +694,7 @@ export default function AthletesScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -766,7 +842,7 @@ export default function AthletesScreen() {
                               В этой группе пока нет спортсменов
                             </Text>
                           ) : (
-                            groupAthletes.map((athlete) => (
+                            sortedGroupAthletes.map((athlete) => (
                               <View key={athlete.athleteId} style={styles.memberRow}>
                                 <View style={styles.memberInfo}>
                                   <AthleteRow
@@ -779,7 +855,7 @@ export default function AthletesScreen() {
                                   style={styles.removeButton}
                                   disabled={removingAthleteId === athlete.athleteId}
                                   onPress={() => confirmRemoveAthleteFromGroup(athlete)}
-                                  accessibilityLabel={`Исключить ${athlete.name} ${athlete.surname} из группы`}
+                                  accessibilityLabel={`Исключить ${getAthleteFullName(athlete)} из группы`}
                                 >
                                   {removingAthleteId === athlete.athleteId ? (
                                     <ActivityIndicator size="small" color="#DC2626" />
@@ -792,7 +868,7 @@ export default function AthletesScreen() {
                                   style={styles.archiveAthleteButton}
                                   disabled={archivingAthleteId === athlete.athleteId}
                                   onPress={() => confirmArchiveAthlete(athlete)}
-                                  accessibilityLabel={`Архивировать ${athlete.name} ${athlete.surname}`}
+                                  accessibilityLabel={`Архивировать ${getAthleteFullName(athlete)}`}
                                 >
                                   {archivingAthleteId === athlete.athleteId ? (
                                     <ActivityIndicator size="small" color="#DC2626" />
@@ -817,6 +893,29 @@ export default function AthletesScreen() {
                 <Text style={styles.sectionCount}>{allAthletes.length}</Text>
               </View>
 
+              {/* Поиск по имени и фамилии */}
+              <View style={styles.searchContainer}>
+                <Text style={styles.searchIcon}>⌕</Text>
+                <TextInput
+                  style={styles.searchInput}
+                  value={athleteSearch}
+                  onChangeText={setAthleteSearch}
+                  placeholder="Поиск по имени или фамилии"
+                  placeholderTextColor="#9CA3AF"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {athleteSearch.length > 0 && (
+                  <Pressable
+                    style={styles.clearSearchButton}
+                    onPress={() => setAthleteSearch('')}
+                  >
+                    <Text style={styles.clearSearchText}>×</Text>
+                  </Pressable>
+                )}
+              </View>
+
               {loadingAthletes ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="small" color="#2563EB" />
@@ -831,9 +930,16 @@ export default function AthletesScreen() {
                     Здесь отображаются спортсмены с аккаунтами и профили, созданные тренером.
                   </Text>
                 </View>
+              ) : filteredAthletes.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <Text style={styles.emptyTitle}>Ничего не найдено</Text>
+                  <Text style={styles.emptyText}>
+                    Попробуй изменить запрос или проверить написание имени и фамилии.
+                  </Text>
+                </View>
               ) : (
                 <View style={styles.allAthletesCard}>
-                  {allAthletes.map((athlete, index) => (
+                  {filteredAthletes.map((athlete, index) => (
                     <View key={athlete.athleteId}>
                       {index > 0 && <View style={styles.rosterDivider} />}
                       <View style={styles.memberRow}>
@@ -917,11 +1023,11 @@ export default function AthletesScreen() {
                   ) : archivedAthletes.length === 0 ? (
                     <Text style={styles.message}>Архивных спортсменов нет</Text>
                   ) : (
-                    archivedAthletes.map((athlete) => (
+                    sortedArchivedAthletes.map((athlete) => (
                       <View key={athlete.athleteId} style={styles.archivedRow}>
                         <View style={styles.archivedInfo}>
                           <Text style={styles.athleteName}>
-                            {athlete.name} {athlete.surname}
+                            {getAthleteFullName(athlete)}
                           </Text>
                           {athlete.email ? (
                             <Text style={styles.athleteEmail}>{athlete.email}</Text>
@@ -948,6 +1054,7 @@ export default function AthletesScreen() {
         )}
       </ScrollView>
 
+      {/* Окно добавления спортсмена в группу */}
       <Modal
         visible={addToGroup !== null}
         transparent
@@ -985,37 +1092,75 @@ export default function AthletesScreen() {
                 </Text>
               </View>
             ) : (
-              <ScrollView style={styles.availableList} keyboardShouldPersistTaps="handled">
-                {availableAthletes.map((athlete) => {
-                  const isAdding = addingAthleteId === athlete.athleteId;
-
-                  return (
+              <>
+                <View style={styles.searchContainer}>
+                  <Text style={styles.searchIcon}>⌕</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    value={availableAthleteSearch}
+                    onChangeText={setAvailableAthleteSearch}
+                    placeholder="Поиск по имени или фамилии"
+                    placeholderTextColor="#9CA3AF"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                  />
+                  {availableAthleteSearch.length > 0 && (
                     <Pressable
-                      key={athlete.athleteId}
-                      style={styles.availableAthlete}
-                      disabled={addingAthleteId !== null}
-                      onPress={() => void addAthlete(athlete)}
+                      style={styles.clearSearchButton}
+                      onPress={() => setAvailableAthleteSearch('')}
                     >
-                      <View style={styles.athleteAvatar}>
-                        <Text style={styles.athleteAvatarText}>{getInitials(athlete)}</Text>
-                      </View>
-                      <View style={styles.availableAthleteInfo}>
-                        <Text style={styles.athleteName}>
-                          {athlete.name} {athlete.surname}
-                        </Text>
-                        {athlete.email ? (
-                          <Text style={styles.athleteEmail}>{athlete.email}</Text>
-                        ) : null}
-                      </View>
-                      {isAdding ? (
-                        <ActivityIndicator size="small" color="#2563EB" />
-                      ) : (
-                        <Text style={styles.availablePlus}>+</Text>
-                      )}
+                      <Text style={styles.clearSearchText}>×</Text>
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
+                  )}
+                </View>
+
+                {filteredAvailableAthletes.length === 0 ? (
+                  <View style={styles.modalEmpty}>
+                    <Text style={styles.emptyTitle}>Ничего не найдено</Text>
+                    <Text style={styles.emptyText}>
+                      Попробуй изменить поисковый запрос.
+                    </Text>
+                  </View>
+                ) : (
+                  <ScrollView
+                    style={styles.availableList}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                    {filteredAvailableAthletes.map((athlete) => {
+                      const isAdding = addingAthleteId === athlete.athleteId;
+
+                      return (
+                        <Pressable
+                          key={athlete.athleteId}
+                          style={styles.availableAthlete}
+                          disabled={addingAthleteId !== null}
+                          onPress={() => void addAthlete(athlete)}
+                        >
+                          <View style={styles.athleteAvatar}>
+                            <Text style={styles.athleteAvatarText}>
+                              {getInitials(athlete)}
+                            </Text>
+                          </View>
+                          <View style={styles.availableAthleteInfo}>
+                            <Text style={styles.athleteName}>
+                              {getAthleteFullName(athlete)}
+                            </Text>
+                            {athlete.email ? (
+                              <Text style={styles.athleteEmail}>{athlete.email}</Text>
+                            ) : null}
+                          </View>
+                          {isAdding ? (
+                            <ActivityIndicator size="small" color="#2563EB" />
+                          ) : (
+                            <Text style={styles.availablePlus}>+</Text>
+                          )}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </>
             )}
 
             <Pressable
@@ -1029,6 +1174,7 @@ export default function AthletesScreen() {
         </View>
       </Modal>
 
+      {/* Создание спортсмена */}
       <Modal
         visible={showCreateAthleteModal}
         transparent
@@ -1051,109 +1197,114 @@ export default function AthletesScreen() {
               showsVerticalScrollIndicator={false}
             >
               <View style={styles.createModalCard}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalTitleContainer}>
-                <Text style={styles.modalTitle}>Новый спортсмен</Text>
-                <Text style={styles.modalSubtitle}>
-                  Профиль будет создан без аккаунта
-                </Text>
-              </View>
-              <Pressable
-                style={styles.modalCloseButton}
-                onPress={() => setShowCreateAthleteModal(false)}
-                disabled={creatingAthlete}
-              >
-                <Text style={styles.modalCloseText}>×</Text>
-              </Pressable>
-            </View>
+                <View style={styles.modalHeader}>
+                  <View style={styles.modalTitleContainer}>
+                    <Text style={styles.modalTitle}>Новый спортсмен</Text>
+                    <Text style={styles.modalSubtitle}>
+                      Профиль будет создан без аккаунта
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.modalCloseButton}
+                    onPress={() => setShowCreateAthleteModal(false)}
+                    disabled={creatingAthlete}
+                  >
+                    <Text style={styles.modalCloseText}>×</Text>
+                  </Pressable>
+                </View>
 
-            <Text style={styles.inputLabel}>Имя</Text>
-            <TextInput
-              style={styles.groupInput}
-              placeholder="Имя спортсмена"
-              placeholderTextColor="#9CA3AF"
-              value={newAthleteName}
-              onChangeText={setNewAthleteName}
-              maxLength={100}
-              autoCapitalize="words"
-              editable={!creatingAthlete}
-            />
+                {/* Сначала фамилия */}
+                <Text style={styles.inputLabel}>Фамилия</Text>
+                <TextInput
+                  style={styles.groupInput}
+                  placeholder="Фамилия спортсмена"
+                  placeholderTextColor="#9CA3AF"
+                  value={newAthleteSurname}
+                  onChangeText={setNewAthleteSurname}
+                  maxLength={100}
+                  autoCapitalize="words"
+                  returnKeyType="next"
+                  editable={!creatingAthlete}
+                />
 
-            <Text style={styles.inputLabel}>Фамилия</Text>
-            <TextInput
-              style={styles.groupInput}
-              placeholder="Фамилия спортсмена"
-              placeholderTextColor="#9CA3AF"
-              value={newAthleteSurname}
-              onChangeText={setNewAthleteSurname}
-              maxLength={100}
-              autoCapitalize="words"
-              editable={!creatingAthlete}
-            />
+                {/* Затем имя */}
+                <Text style={styles.inputLabel}>Имя</Text>
+                <TextInput
+                  style={styles.groupInput}
+                  placeholder="Имя спортсмена"
+                  placeholderTextColor="#9CA3AF"
+                  value={newAthleteName}
+                  onChangeText={setNewAthleteName}
+                  maxLength={100}
+                  autoCapitalize="words"
+                  returnKeyType="done"
+                  editable={!creatingAthlete}
+                />
 
-            <Text style={styles.inputLabel}>Пол</Text>
-            <View style={styles.genderOptions}>
-              <Pressable
-                style={[
-                  styles.genderOption,
-                  newAthleteGender === 0 && styles.genderOptionSelected,
-                ]}
-                onPress={() => setNewAthleteGender(0)}
-                disabled={creatingAthlete}
-              >
-                <Text
-                  style={[
-                    styles.genderOptionText,
-                    newAthleteGender === 0 && styles.genderOptionTextSelected,
-                  ]}
+                <Text style={styles.inputLabel}>Пол</Text>
+                <View style={styles.genderOptions}>
+                  <Pressable
+                    style={[
+                      styles.genderOption,
+                      newAthleteGender === 0 && styles.genderOptionSelected,
+                    ]}
+                    onPress={() => setNewAthleteGender(0)}
+                    disabled={creatingAthlete}
+                  >
+                    <Text
+                      style={[
+                        styles.genderOptionText,
+                        newAthleteGender === 0 && styles.genderOptionTextSelected,
+                      ]}
+                    >
+                      Мужской
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.genderOption,
+                      newAthleteGender === 1 && styles.genderOptionSelected,
+                    ]}
+                    onPress={() => setNewAthleteGender(1)}
+                    disabled={creatingAthlete}
+                  >
+                    <Text
+                      style={[
+                        styles.genderOptionText,
+                        newAthleteGender === 1 && styles.genderOptionTextSelected,
+                      ]}
+                    >
+                      Женский
+                    </Text>
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  style={[styles.createSubmitButton, creatingAthlete && styles.disabledButton]}
+                  onPress={() => void createAthlete()}
+                  disabled={creatingAthlete}
                 >
-                  Мужской
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.genderOption,
-                  newAthleteGender === 1 && styles.genderOptionSelected,
-                ]}
-                onPress={() => setNewAthleteGender(1)}
-                disabled={creatingAthlete}
-              >
-                <Text
-                  style={[
-                    styles.genderOptionText,
-                    newAthleteGender === 1 && styles.genderOptionTextSelected,
-                  ]}
+                  {creatingAthlete ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.createSubmitButtonText}>Создать спортсмена</Text>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  style={styles.modalCancelButton}
+                  onPress={() => setShowCreateAthleteModal(false)}
+                  disabled={creatingAthlete}
                 >
-                  Женский
-                </Text>
-              </Pressable>
-            </View>
-
-            <Pressable
-              style={[styles.createSubmitButton, creatingAthlete && styles.disabledButton]}
-              onPress={() => void createAthlete()}
-              disabled={creatingAthlete}
-            >
-              {creatingAthlete ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.createSubmitButtonText}>Создать спортсмена</Text>
-              )}
-            </Pressable>
-
-            <Pressable
-              style={styles.modalCancelButton}
-              onPress={() => setShowCreateAthleteModal(false)}
-              disabled={creatingAthlete}
-            >
-              <Text style={styles.modalCancelText}>Отмена</Text>
-            </Pressable>
+                  <Text style={styles.modalCancelText}>Отмена</Text>
+                </Pressable>
               </View>
             </ScrollView>
           </KeyboardAvoidingView>
         </View>
       </Modal>
 
+      {/* Создание группы */}
       <Modal
         visible={showCreateGroupModal}
         transparent
@@ -1239,7 +1390,7 @@ function AthleteRow({
       </View>
       <View style={styles.athleteInfo}>
         <Text style={styles.athleteName}>
-          {athlete.name} {athlete.surname}
+          {getAthleteFullName(athlete)}
         </Text>
         {athlete.email ? (
           <Text style={styles.athleteEmail}>{athlete.email}</Text>
@@ -1325,6 +1476,39 @@ const styles = StyleSheet.create({
   athleteInfo: { flex: 1, minWidth: 0 },
   athleteName: { fontSize: 15, fontWeight: '600', color: '#111827' },
   athleteEmail: { marginTop: 3, fontSize: 12, color: '#9CA3AF' },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 48,
+    paddingHorizontal: 12,
+    marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 13,
+  },
+  searchIcon: {
+    fontSize: 25,
+    color: '#9CA3AF',
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+  },
+  clearSearchButton: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearSearchText: {
+    fontSize: 23,
+    color: '#9CA3AF',
+  },
   emptyCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18 },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
   emptyText: { marginTop: 6, fontSize: 13, lineHeight: 19, color: '#6B7280' },
@@ -1372,7 +1556,7 @@ const styles = StyleSheet.create({
   modalCloseText: { fontSize: 25, lineHeight: 28, color: '#374151' },
   modalLoading: { minHeight: 130, alignItems: 'center', justifyContent: 'center', gap: 12 },
   modalEmpty: { paddingVertical: 24 },
-  availableList: { flexGrow: 0 },
+  availableList: { flexGrow: 0, maxHeight: 380 },
   availableAthlete: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF',
     borderRadius: 14, paddingHorizontal: 12, marginBottom: 8,

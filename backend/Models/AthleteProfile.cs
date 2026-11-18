@@ -15,6 +15,10 @@ public class AthleteProfile
     public string Surname { get; set; } = string.Empty;
 
     public Gender Gender { get; set; }
+
+    // Дата рождения спортсмена.
+    public DateTime? DateOfBirth { get; set; }
+
     public string? BeltColor { get; set; }
 
     public WeightClass WeightCategory { get; set; }

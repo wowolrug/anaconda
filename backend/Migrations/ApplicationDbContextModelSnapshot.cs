@@ -210,6 +210,9 @@ namespace backend.Migrations
                     b.Property<int?>("CreatedByUserId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTime?>("DateOfBirth")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("Gender")
                         .HasColumnType("integer");
 

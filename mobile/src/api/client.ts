@@ -3,7 +3,7 @@ import axios from 'axios';
 
 export const api = axios.create({
   
-  baseURL: 'https://31.77.77.157/api',
+  baseURL: 'http://31.77.77.157/api',
   headers: {
     'Content-Type': 'application/json',
   },

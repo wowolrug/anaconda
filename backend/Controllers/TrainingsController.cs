@@ -439,6 +439,7 @@ public class TrainingsController : ControllerBase
     // UPDATE TRAINING
     // ==============================
 
+    
     [HttpPut("{id:int}")]
     [Authorize(Roles = "Coach")]
     public async Task<IActionResult> UpdateTraining(
@@ -475,7 +476,8 @@ public class TrainingsController : ControllerBase
             var groupBelongsToCoach = await _db.TrainingGroups
                 .AnyAsync(g =>
                     g.TrainingGroupId == dto.TrainingGroupId.Value &&
-                    g.CoachId == coachId);
+                    g.CoachId == coachId &&
+                    !g.IsArchived);
 
             if (!groupBelongsToCoach)
             {
@@ -495,6 +497,42 @@ public class TrainingsController : ControllerBase
         training.Type = dto.Type;
         training.TrainingGroupId = dto.TrainingGroupId;
         training.Description = dto.Description?.Trim() ?? string.Empty;
+
+        // Если тренировке назначили группу,
+        // добавляем всех её активных спортсменов.
+        if (training.TrainingGroupId.HasValue)
+        {
+            var athleteProfileIds = await _db.GroupMemberships
+                .Where(m =>
+                    m.TrainingGroupId == training.TrainingGroupId.Value &&
+                    m.LeftDate == null &&
+                    !m.AthleteProfile.IsArchived &&
+                    m.AthleteProfile.UserId != coachId)
+                .Select(m => m.AthleteProfileId)
+                .ToListAsync();
+
+            var existingAthleteIds = await _db.TrainingParticipants
+                .Where(p => p.TrainingId == training.TrainingId)
+                .Select(p => p.AthleteProfileId)
+                .ToListAsync();
+
+            var existingIds = existingAthleteIds.ToHashSet();
+
+            var newParticipants = athleteProfileIds
+                .Where(athleteId => !existingIds.Contains(athleteId))
+                .Select(athleteId => new TrainingParticipant
+                {
+                    TrainingId = training.TrainingId,
+                    AthleteProfileId = athleteId,
+                    Status = AttendanceStatus.Unmarked
+                })
+                .ToList();
+
+            if (newParticipants.Count > 0)
+            {
+                _db.TrainingParticipants.AddRange(newParticipants);
+            }
+        }
 
         await _db.SaveChangesAsync();
 

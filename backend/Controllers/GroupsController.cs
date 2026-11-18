@@ -16,6 +16,12 @@ public class GroupsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
 
+    private static readonly TimeZoneInfo MoscowTimeZone =
+        TimeZoneInfo.FindSystemTimeZoneById(
+            OperatingSystem.IsWindows()
+                ? "Russian Standard Time"
+                : "Europe/Moscow");
+
     public GroupsController(ApplicationDbContext db)
     {
         _db = db;
@@ -29,6 +35,13 @@ public class GroupsController : ControllerBase
         return int.TryParse(userId, out var id)
             ? id
             : null;
+    }
+
+    private static DateTime GetMoscowNow()
+    {
+        return TimeZoneInfo.ConvertTimeFromUtc(
+            DateTime.UtcNow,
+            MoscowTimeZone);
     }
 
     private async Task<bool> CoachOwnsActiveGroup(
@@ -696,7 +709,64 @@ public class GroupsController : ControllerBase
             });
         }
 
-        membership.LeftDate = DateTime.UtcNow;
+        // Закрываем членство в группе, сохраняя историю.
+        var nowUtc = DateTime.UtcNow;
+        membership.LeftDate = nowUtc;
+
+        // Находим тренировки этой группы, которые ещё
+        // не завершились на текущий момент по Москве.
+        var moscowNow = GetMoscowNow();
+
+        var groupTrainings = await _db.Trainings
+            .Where(t => t.TrainingGroupId == id)
+            .Select(t => new
+            {
+                t.TrainingId,
+                t.Date,
+                t.EndTime,
+                t.Status
+            })
+            .ToListAsync();
+
+        var unfinishedTrainingIds = groupTrainings
+            .Where(t =>
+            {
+                // Явно завершённые тренировки не трогаем.
+                if (t.Status == TrainingStatus.Completed)
+                    return false;
+
+                // Дата и время окончания тренировки.
+                var trainingDate = DateTime.SpecifyKind(
+                    t.Date.Date,
+                    DateTimeKind.Unspecified);
+
+                var endDateTime = trainingDate.Add(
+                    t.EndTime.ToTimeSpan());
+
+                // Если тренировка уже закончилась,
+                // сохраняем участника в истории.
+                return moscowNow < endDateTime;
+            })
+            .Select(t => t.TrainingId)
+            .ToList();
+
+        // Удаляем спортсмена только из незавершённых
+        // тренировок этой группы.
+        if (unfinishedTrainingIds.Count > 0)
+        {
+            var participantsToRemove =
+                await _db.TrainingParticipants
+                    .Where(p =>
+                        p.AthleteProfileId == athleteId &&
+                        unfinishedTrainingIds.Contains(p.TrainingId))
+                    .ToListAsync();
+
+            if (participantsToRemove.Count > 0)
+            {
+                _db.TrainingParticipants.RemoveRange(
+                    participantsToRemove);
+            }
+        }
 
         await _db.SaveChangesAsync();
 

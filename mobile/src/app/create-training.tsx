@@ -1,7 +1,14 @@
-import { useEffect, useState } from 'react';
+
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -127,6 +134,39 @@ export default function CreateTraining() {
   const [accessMessage, setAccessMessage] = useState(
     'Создавать и редактировать тренировки может только тренер.',
   );
+
+  // Управление клавиатурой и прокруткой
+  const scrollViewRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const descriptionPositionRef = useRef(0);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      'keyboardDidShow',
+      (event) => {
+        setKeyboardHeight(event.endCoordinates.height);
+
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({
+            y: Math.max(0, descriptionPositionRef.current - 30),
+            animated: true,
+          });
+        }, 250);
+      },
+    );
+
+    const hideSubscription = Keyboard.addListener(
+      'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      },
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -297,7 +337,7 @@ export default function CreateTraining() {
             [
               {
                 text: 'К расписанию',
-                onPress: () => router.replace('/training-list'),
+                onPress: () => router.replace('/trainings'),
               },
             ],
           );
@@ -417,11 +457,21 @@ export default function CreateTraining() {
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <KeyboardAvoidingView
           style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+          enabled
         >
           <ScrollView
-            contentContainerStyle={styles.content}
+            ref={scrollViewRef}
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.content,
+              { paddingBottom: Math.max(36, keyboardHeight + 36) },
+            ]}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={
+              Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+            }
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.title}>
@@ -581,12 +631,28 @@ export default function CreateTraining() {
               </View>
             </View>
 
-            <View style={styles.card}>
+            <View
+              style={styles.card}
+              onLayout={(event) => {
+                descriptionPositionRef.current = event.nativeEvent.layout.y;
+              }}
+            >
               <Text style={styles.sectionTitle}>Описание</Text>
               <TextInput
                 style={[styles.input, styles.descriptionInput]}
                 value={description}
                 onChangeText={setDescription}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollTo({
+                      y: Math.max(
+                        0,
+                        descriptionPositionRef.current - 30,
+                      ),
+                      animated: true,
+                    });
+                  }, 350);
+                }}
                 placeholder="Тема занятия или план тренировки"
                 multiline
                 textAlignVertical="top"
@@ -742,7 +808,10 @@ const styles = StyleSheet.create({
   },
   timeRow: { flexDirection: 'row', gap: 12 },
   timeColumn: { flex: 1 },
-  descriptionInput: { minHeight: 110 },
+  descriptionInput: {
+    minHeight: 110,
+    maxHeight: 220,
+  },
   characterCount: {
     marginTop: 6,
     textAlign: 'right',
